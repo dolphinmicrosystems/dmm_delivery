@@ -1,16 +1,28 @@
 import 'package:flutter/material.dart';
 
 import '../state/app_state.dart';
+import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import 'customer/customer_home_screen.dart';
 import 'customer/customer_receipt_screen.dart';
 import 'customer/customer_tracking_screen.dart';
+import 'owner/owner_settings_screen.dart';
 import 'rider/rider_active_screen.dart';
 import 'rider/rider_earnings_screen.dart';
 import 'rider/rider_orders_screen.dart';
 
+/// Hosts the existing prototype screens behind real auth. A signed-in
+/// driver (AuthRole.driver) is locked to the Rider mock tabs with no
+/// Customer/Rider toggle - the Customer-facing mock concept doesn't apply
+/// to them. A signed-in owner keeps the original toggle (useful for
+/// previewing both) plus a Settings entry for driver invitations, which
+/// isn't part of the persistent IndexedStack tabs below - it's pushed on
+/// top when tapped, matching "settings at the bottom" as a bottom-bar
+/// action rather than a fourth mock data tab.
 class RootShell extends StatefulWidget {
-  const RootShell({super.key});
+  const RootShell({super.key, required this.authState});
+
+  final AuthState authState;
 
   @override
   State<RootShell> createState() => _RootShellState();
@@ -19,12 +31,22 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   final AppState appState = AppState();
 
+  bool get _isDriver => widget.authState.role == AuthRole.driver;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isDriver) {
+      appState.switchRole(AppRole.rider);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: appState,
       builder: (context, _) {
-        final isCustomer = appState.role == AppRole.customer;
+        final isCustomer = !_isDriver && appState.role == AppRole.customer;
         final tabIndex = isCustomer ? appState.customerTabIndex : appState.riderTabIndex;
         final screens = isCustomer
             ? [
@@ -54,20 +76,21 @@ class _RootShellState extends State<RootShell> {
                   height: 32,
                   decoration: BoxDecoration(color: AppColors.brand, borderRadius: BorderRadius.circular(10)),
                   alignment: Alignment.center,
-                  child: const Text('K', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                  child: const Text('B', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
                 ),
                 const SizedBox(width: 10),
-                const Text('Kōwhai', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+                const Text('Blue Dot', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
               ],
             ),
             actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 16),
-                child: _RoleSwitch(
-                  role: appState.role,
-                  onChanged: appState.switchRole,
+              if (!_isDriver)
+                Padding(
+                  padding: const EdgeInsets.only(right: 16),
+                  child: _RoleSwitch(
+                    role: appState.role,
+                    onChanged: appState.switchRole,
+                  ),
                 ),
-              ),
             ],
           ),
           body: IndexedStack(
@@ -77,6 +100,12 @@ class _RootShellState extends State<RootShell> {
           bottomNavigationBar: NavigationBar(
             selectedIndex: tabIndex,
             onDestinationSelected: (index) {
+              if (!_isDriver && index == labels.length) {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => OwnerSettingsScreen(authState: widget.authState)),
+                );
+                return;
+              }
               if (isCustomer) {
                 appState.setCustomerTab(index);
               } else {
@@ -86,6 +115,8 @@ class _RootShellState extends State<RootShell> {
             destinations: [
               for (var i = 0; i < labels.length; i++)
                 NavigationDestination(icon: Icon(icons[i]), label: labels[i]),
+              if (!_isDriver)
+                const NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
             ],
           ),
         );

@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "146112277848",
+    "firebase_url": "https://video-gen-499408-default-rtdb.firebaseio.com",
+    "project_id": "video-gen-499408",
+    "storage_bucket": "video-gen-499408.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:146112277848:android:9bed9f0d5147442c4b492d",
+        "android_client_info": {
+          "package_name": "com.delivery.dmm_delivery"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-I76K6bkYWaXsAHnsJuYA4sVF7-bf0Fo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
