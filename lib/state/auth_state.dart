@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../config/infra_config.dart';
+
 /// Who the signed-in Firebase user is, per the `role` custom claim the
 /// backend's beforeSignIn blocking function sets (see dmm-delivery-app's
 /// application/handle_sign_in.py). `rider` is the backend's/Firestore rules'
@@ -10,15 +12,6 @@ import 'package:google_sign_in/google_sign_in.dart';
 enum AuthRole { owner, driver }
 
 enum AuthStatus { loading, signedOut, needsRole, signedIn, error }
-
-/// The OAuth web client ID backing Firebase's Google sign-in provider - the
-/// same value as infrastructure/terraform/terraform.tfvars'
-/// google_signin_client_id in dmm-delivery-app. Not a secret (it's a public
-/// identifier apps embed directly), but Android's GoogleSignIn needs it
-/// explicitly as `serverClientId` to request an ID token Firebase can verify
-/// - without it, GoogleSignIn.instance.initialize() throws on Android.
-const _googleSignInServerClientId =
-    '146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com';
 
 /// Wraps Firebase Auth + Google Sign-In. A single instance lives for the
 /// app's lifetime (created in main.dart), separate from AppState - that
@@ -64,7 +57,7 @@ class AuthState extends ChangeNotifier {
 
     try {
       if (!_googleSignInReady) {
-        await _googleSignIn.initialize(serverClientId: _googleSignInServerClientId);
+        await _googleSignIn.initialize(serverClientId: InfraConfig.googleSignInServerClientId);
         _googleSignInReady = true;
       }
       final googleUser = await _googleSignIn.authenticate();

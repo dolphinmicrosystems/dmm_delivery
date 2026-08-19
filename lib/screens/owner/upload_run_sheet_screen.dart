@@ -3,6 +3,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../config/infra_config.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/primary_button.dart';
@@ -44,7 +45,9 @@ class _UploadRunSheetScreenState extends State<UploadRunSheetScreen> {
 
     setState(() => _uploadProgress = 0);
 
-    final task = FirebaseStorage.instance.ref('$roundKey/$uploadId.pdf').putData(
+    final task = FirebaseStorage.instanceFor(bucket: InfraConfig.runSheetsBucket)
+        .ref('$roundKey/$uploadId.pdf')
+        .putData(
           bytes,
           SettableMetadata(
             contentType: 'application/pdf',

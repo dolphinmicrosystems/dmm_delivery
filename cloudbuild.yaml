@@ -1,0 +1,75 @@
+# Manually-triggered pipeline: syncs lib/config/infra_config.dart to a
+# target environment's live GCP/Firebase state, then builds. Deliberately
+# NOT push/tag-triggered - an environment move is rare and consequential
+# enough to want a human explicitly picking the target each time.
+#
+# Prerequisites for a genuinely new environment (e.g. first QA deploy):
+#   1. Someone runs `flutterfire configure --project=<target-id>` locally
+#      and commits the resulting firebase_options.dart/google-services.json
+#      diff - this pipeline verifies that happened, it doesn't do it for
+#      you (see tool/generate_infra_config.sh's mismatch guard).
+#   2. This Cloud Build trigger's service account
+#      (<project-number>@cloudbuild.gserviceaccount.com, in whichever GCP
+#      project hosts this trigger) needs read access on the *target*
+#      project if that's a different project: roles/cloudfunctions.viewer
+#      and Identity Toolkit admin read (e.g. roles/firebaseauth.viewer).
+#
+# Register the manual trigger (one-time):
+#   gcloud builds triggers create manual \
+#     --name=sync-and-build \
+#     --repo=<your-repo-url> --branch-pattern="^main$" \
+#     --build-config=cloudbuild.yaml
+#
+# Run it:
+#   gcloud builds triggers run sync-and-build --branch=main \
+#     --substitutions=_GCP_PROJECT_ID=<target-project-id>
+
+substitutions:
+  _GCP_PROJECT_ID: "" # required - target environment's GCP/Firebase project id
+  _GCLOUD_ACCOUNT: "" # optional - defaults to this trigger's own service account
+
+steps:
+  - id: require-target-project
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        if [[ -z "$_GCP_PROJECT_ID" ]]; then
+          echo "error: _GCP_PROJECT_ID substitution is required - which" >&2
+          echo "       environment is this build targeting?" >&2
+          exit 1
+        fi
+
+  # Fails the whole build here if firebase_options.dart hasn't been
+  # re-pointed at $_GCP_PROJECT_ID yet - see generate_infra_config.sh's
+  # mismatch guard. That's the intended gate for an environment move.
+  - id: sync-infra-config
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        export GCP_PROJECT_ID="$_GCP_PROJECT_ID"
+        if [[ -n "$_GCLOUD_ACCOUNT" ]]; then
+          export GCLOUD_ACCOUNT="$_GCLOUD_ACCOUNT"
+        fi
+        ./tool/generate_infra_config.sh
+    waitFor: ["require-target-project"]
+
+  - id: flutter-analyze
+    name: ghcr.io/cirruslabs/flutter:stable
+    entrypoint: flutter
+    args: ["analyze"]
+    waitFor: ["sync-infra-config"]
+
+  # Placeholder - release signing (Android keystore, iOS certs/provisioning)
+  # is a separate concern not wired up here yet.
+  - id: flutter-build
+    name: ghcr.io/cirruslabs/flutter:stable
+    entrypoint: flutter
+    args: ["build", "appbundle", "--release"]
+    waitFor: ["flutter-analyze"]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
