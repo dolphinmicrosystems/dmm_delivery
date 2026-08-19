@@ -11,10 +11,10 @@ plugins {
 android {
     namespace = "com.delivery.dmm_delivery"
     compileSdk = flutter.compileSdkVersion
-    // flutter.ndkVersion (28.2.13676358) keeps failing to download cleanly on this
-    // machine ([CXX1101] missing source.properties). This app has no native/NDK
-    // code, so pin to an NDK that's already installed and valid instead.
-    ndkVersion = "27.0.12077973"
+    // The "jni" plugin (a transitive dep pulled in via file_picker/flutter_map)
+    // needs 28.2.13676358 specifically - pin to it explicitly rather than
+    // relying on Gradle's automatic "use the highest available" fallback.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

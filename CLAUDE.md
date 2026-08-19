@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Flutter app "Kōwhai" (package name `dmm_delivery`) — a Dunedin/Auckland delivery app prototype with two roles, Customer and Rider, switchable at runtime from the app bar. Targets Android, iOS, and web.
+Flutter app "Blue Dot" (package name `dmm_delivery`) — a Dunedin/Auckland delivery app prototype with two roles, Customer and Rider, switchable at runtime from the app bar. Targets Android, iOS, and web.
 
 ## Commands
 
@@ -15,7 +15,7 @@ Flutter app "Kōwhai" (package name `dmm_delivery`) — a Dunedin/Auckland deliv
 - Run a single test file: `flutter test test/widget_test.dart`
 - Format: `dart format .`
 
-Lints come from `package:flutter_lints/flutter.yaml` via `analysis_options.yaml`; the analyzer excludes `build/**`, `android/**`, `ios/**`, `web/**`.
+Lints come from `package:flutter_lints/flutter.yaml` via `analysis_options.yaml`; the analyzer excludes `build/**`, `android/**`, `ios/**`, `web/**`, `windows/**`, `macos/**`, `linux/**`.
 
 ## Architecture
 
