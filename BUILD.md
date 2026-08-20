@@ -57,7 +57,7 @@ recreated, the Google sign-in client got rotated - and you want
 `infra_config.dart` to reflect it, without switching environments.
 
 ```
-GCP_PROJECT_ID=video-gen-499408 ./tool/generate_infra_config.sh
+GCP_PROJECT_ID=i-destiny-428904-s2 ./tool/generate_infra_config.sh
 ```
 
 What it does: reads the target project (mandatory - the script refuses to
@@ -142,7 +142,7 @@ gcloud builds triggers create manual \
 
 ```
 gcloud builds triggers run sync-and-build --branch=main \
-  --substitutions=_GCP_PROJECT_ID=video-gen-499408
+  --substitutions=_GCP_PROJECT_ID=i-destiny-428904-s2
 ```
 
 (or "Run trigger" in the Cloud Build console, filling in `_GCP_PROJECT_ID`)

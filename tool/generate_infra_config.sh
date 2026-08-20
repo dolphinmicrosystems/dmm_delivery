@@ -41,7 +41,7 @@
 # human-committed operation for now.
 #
 # Usage:
-#   GCP_PROJECT_ID=video-gen-499408 ./tool/generate_infra_config.sh          # routine refresh, same project
+#   GCP_PROJECT_ID=i-destiny-428904-s2 ./tool/generate_infra_config.sh          # routine refresh, same project
 #   GCP_PROJECT_ID=new-project-id   ./tool/generate_infra_config.sh          # environment move - runs flutterfire configure first
 #
 # Uses whatever account `gcloud` is currently active as; override with

@@ -50,33 +50,31 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAWLV57xQC7RFj3wosQtLaLp8k4DVhyjK4',
-    appId: '1:146112277848:web:1f560dbe4fd168484b492d',
-    messagingSenderId: '146112277848',
-    projectId: 'video-gen-499408',
-    authDomain: 'video-gen-499408.firebaseapp.com',
-    databaseURL: 'https://video-gen-499408-default-rtdb.firebaseio.com',
-    storageBucket: 'video-gen-499408.firebasestorage.app',
-    measurementId: 'G-GZY9FW9W6E',
+    apiKey: 'AIzaSyBNtxo444tvMD4cp6x8oizewTf1SvpRLS4',
+    appId: '1:815924295824:web:d5bf26e07ff2b977fcc015',
+    messagingSenderId: '815924295824',
+    projectId: 'i-destiny-428904-s2',
+    authDomain: 'i-destiny-428904-s2.firebaseapp.com',
+    databaseURL: 'https://i-destiny-428904-s2-default-rtdb.firebaseio.com',
+    storageBucket: 'i-destiny-428904-s2.firebasestorage.app',
+    measurementId: 'G-8M8325PJJ7',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyA-I76K6bkYWaXsAHnsJuYA4sVF7-bf0Fo',
-    appId: '1:146112277848:android:9bed9f0d5147442c4b492d',
-    messagingSenderId: '146112277848',
-    projectId: 'video-gen-499408',
-    databaseURL: 'https://video-gen-499408-default-rtdb.firebaseio.com',
-    storageBucket: 'video-gen-499408.firebasestorage.app',
+    apiKey: 'AIzaSyC06hW0xG8OVfH0Myq5NON91yXQAIT-80A',
+    appId: '1:815924295824:android:60e97bcd3edee89dfcc015',
+    messagingSenderId: '815924295824',
+    projectId: 'i-destiny-428904-s2',
+    databaseURL: 'https://i-destiny-428904-s2-default-rtdb.firebaseio.com',
+    storageBucket: 'i-destiny-428904-s2.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBqbOoZA6Z0LXs8y0Zgb-vODBrdJduFv0A',
-    appId: '1:146112277848:ios:fccf24563d9043a74b492d',
-    messagingSenderId: '146112277848',
-    projectId: 'video-gen-499408',
-    databaseURL: 'https://video-gen-499408-default-rtdb.firebaseio.com',
-    storageBucket: 'video-gen-499408.firebasestorage.app',
-    iosClientId: '146112277848-lahjhsi6159i8ui7gvv9rlhf54aihb98.apps.googleusercontent.com',
+    apiKey: 'AIzaSyC0w4vFpwx5dfGzsmY4ynb8VLJHd3QIItI',
+    appId: '1:815924295824:ios:f9aff9a5bbc08a79fcc015',
+    messagingSenderId: '815924295824',
+    projectId: 'i-destiny-428904-s2',
+    databaseURL: 'https://i-destiny-428904-s2-default-rtdb.firebaseio.com',
+    storageBucket: 'i-destiny-428904-s2.firebasestorage.app',
     iosBundleId: 'com.delivery.dmmDelivery',
   );
 }

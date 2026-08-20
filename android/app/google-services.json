@@ -1,60 +1,27 @@
 {
   "project_info": {
-    "project_number": "146112277848",
-    "firebase_url": "https://video-gen-499408-default-rtdb.firebaseio.com",
-    "project_id": "video-gen-499408",
-    "storage_bucket": "video-gen-499408.firebasestorage.app"
+    "project_number": "815924295824",
+    "firebase_url": "https://i-destiny-428904-s2-default-rtdb.firebaseio.com",
+    "project_id": "i-destiny-428904-s2",
+    "storage_bucket": "i-destiny-428904-s2.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:146112277848:android:9bed9f0d5147442c4b492d",
+        "mobilesdk_app_id": "1:815924295824:android:60e97bcd3edee89dfcc015",
         "android_client_info": {
           "package_name": "com.delivery.dmm_delivery"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "146112277848-hu29b0hce3nj6op2thbbkegvn79j9cgm.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.delivery.dmm_delivery",
-            "certificate_hash": "7fc1db25e46c8a23b5acc62892de50dc633e8c99"
-          }
-        },
-        {
-          "client_id": "146112277848-t2jtcgj1uggm679r82omk4iqj0h39lrg.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.delivery.dmm_delivery",
-            "certificate_hash": "9729260a20d076896bdfe06b9ba812b2e91567d5"
-          }
-        },
-        {
-          "client_id": "146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyA-I76K6bkYWaXsAHnsJuYA4sVF7-bf0Fo"
+          "current_key": "AIzaSyC06hW0xG8OVfH0Myq5NON91yXQAIT-80A"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com",
-              "client_type": 3
-            },
-            {
-              "client_id": "146112277848-lahjhsi6159i8ui7gvv9rlhf54aihb98.apps.googleusercontent.com",
-              "client_type": 2,
-              "ios_info": {
-                "bundle_id": "com.delivery.dmmDelivery"
-              }
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

@@ -4,11 +4,11 @@
 // state, not from the backend repo's filesystem - see the script for why.
 //
 // Sources:
-//   runSheetsBucket              <- process-run-sheet-upload Cloud
-//                                    Function's Storage trigger config
-//                                    (project video-gen-499408, region us-west1)
+//   runSheetsBucket              <- process-run-sheet Cloud Function's
+//                                    Storage trigger config
+//                                    (project i-destiny-428904-s2, region us-west1)
 //   googleSignInServerClientId   <- Firebase Auth's Google IdP config
-//                                    (projects/video-gen-499408/defaultSupportedIdpConfigs/google.com)
+//                                    (projects/i-destiny-428904-s2/defaultSupportedIdpConfigs/google.com)
 class InfraConfig {
   InfraConfig._();
 
@@ -17,12 +17,12 @@ class InfraConfig {
   /// Android's GoogleSignIn needs it explicitly as `serverClientId` to
   /// request an ID token Firebase can verify - without it,
   /// GoogleSignIn.instance.initialize() throws on Android.
-  static const googleSignInServerClientId = '146112277848-k549kfqtmg1vsbvd0st2qmpsjtlmq06k.apps.googleusercontent.com';
+  static const googleSignInServerClientId = '815924295824-t8s6cn1dpl948eimtcgm5kpbhvclivuc.apps.googleusercontent.com';
 
   /// The dedicated Storage bucket run sheet PDFs must land in - not the
   /// default firebase_options.dart bucket. process_run_sheet_upload_fn.py's
   /// Cloud Storage trigger and storage.rules' owner-only write rule are
   /// only bound to this bucket; uploading to the default bucket instead
   /// silently never triggers processing.
-  static const runSheetsBucket = 'gs://video-gen-499408-run-sheets-f9d5d1';
+  static const runSheetsBucket = 'gs://i-destiny-428904-s2-run-sheets-f9d5d1';
 }
