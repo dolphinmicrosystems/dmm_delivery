@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../state/auth_state.dart';
+import '../../util/app_log.dart';
 import '../root_shell.dart';
 import 'role_select_screen.dart';
 
@@ -20,13 +21,24 @@ class AuthGate extends StatelessWidget {
     return ListenableBuilder(
       listenable: authState,
       builder: (context, _) {
+        // What the gate decides to show for a given status is the crux of
+        // any "it bounced me back to login" report - log the decision, not
+        // just the status, so the rendered screen is visible in the trace.
+        AppLog.auth('AuthGate rebuild', {
+          'status': authState.status.name,
+          'role': authState.role?.name,
+          'uid': authState.user?.uid,
+        });
         switch (authState.status) {
           case AuthStatus.loading:
+            AppLog.auth('AuthGate -> loading spinner');
             return const Scaffold(body: Center(child: CircularProgressIndicator()));
           case AuthStatus.signedOut:
           case AuthStatus.error:
+            AppLog.auth('AuthGate -> RoleSelectScreen', {'error': authState.errorMessage});
             return RoleSelectScreen(authState: authState);
           case AuthStatus.needsRole:
+            AppLog.auth('AuthGate -> needsRole dead-end (no role claim on token)');
             return Scaffold(
               body: Center(
                 child: Padding(
@@ -46,6 +58,7 @@ class AuthGate extends StatelessWidget {
               ),
             );
           case AuthStatus.signedIn:
+            AppLog.auth('AuthGate -> RootShell (signed in)', {'role': authState.role?.name});
             return RootShell(authState: authState);
         }
       },

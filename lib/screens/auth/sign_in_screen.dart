@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/primary_button.dart';
 
 class SignInScreen extends StatelessWidget {
@@ -19,6 +20,14 @@ class SignInScreen extends StatelessWidget {
         listenable: authState,
         builder: (context, _) {
           final isLoading = authState.status == AuthStatus.loading;
+          // `isCurrent` is the tell: if this logs false while the status is
+          // signedIn, the app really did sign in and this screen is simply
+          // a stale route still covering it.
+          AppLog.auth('SignInScreen rebuild', {
+            'status': authState.status.name,
+            'isOwnerPath': isOwnerPath,
+            'isCurrentRoute': ModalRoute.of(context)?.isCurrent,
+          });
           return Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -59,7 +68,10 @@ class SignInScreen extends StatelessWidget {
                     : PrimaryButton(
                         label: 'Continue with Google',
                         icon: Icons.g_mobiledata_rounded,
-                        onPressed: authState.signInWithGoogle,
+                        onPressed: () {
+                          AppLog.auth('Continue with Google tapped', {'isOwnerPath': isOwnerPath});
+                          authState.signInWithGoogle();
+                        },
                       ),
               ],
             ),

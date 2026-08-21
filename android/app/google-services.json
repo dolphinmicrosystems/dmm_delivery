@@ -13,7 +13,20 @@
           "package_name": "com.delivery.dmm_delivery"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "815924295824-h4ltsocfgsmjr0dsl8c85s2qh5sfqcrd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.delivery.dmm_delivery",
+            "certificate_hash": "0bd36ab39f2ce9a8204cf86266049e6b68e969ed"
+          }
+        },
+        {
+          "client_id": "815924295824-t8s6cn1dpl948eimtcgm5kpbhvclivuc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyC06hW0xG8OVfH0Myq5NON91yXQAIT-80A"
@@ -21,7 +34,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "815924295824-t8s6cn1dpl948eimtcgm5kpbhvclivuc.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "815924295824-au8kp9gpid7u9kcl0v8f9mvcard625um.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.delivery.dmmDelivery"
+              }
+            }
+          ]
         }
       }
     }

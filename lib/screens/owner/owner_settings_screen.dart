@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
@@ -92,9 +93,12 @@ class OwnerSettingsScreen extends StatelessWidget {
                   return;
                 }
                 try {
+                  AppLog.owner('inviting driver', {'email': email});
                   await authState.inviteDriver(email);
+                  AppLog.owner('driver invite written', {'email': email});
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
-                } catch (e) {
+                } catch (e, s) {
+                  AppLog.owner.error('driver invite failed', e, s, {'email': email});
                   setState(() => error = 'Couldn\'t send the invite: $e');
                 }
               },
@@ -117,10 +121,16 @@ class _DriverList extends StatelessWidget {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: authState.acceptedDrivers(),
       builder: (context, snapshot) {
+        // Same trap as the circuits stream: a rules rejection would
+        // otherwise render as the benign "No drivers yet" empty state.
+        if (snapshot.hasError) {
+          AppLog.owner.error('acceptedDrivers stream failed', snapshot.error, snapshot.stackTrace);
+        }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
         }
         final docs = snapshot.data?.docs ?? [];
+        AppLog.owner('acceptedDrivers snapshot', {'count': docs.length});
         if (docs.isEmpty) {
           return const SurfaceCard(
             padding: EdgeInsets.all(16),

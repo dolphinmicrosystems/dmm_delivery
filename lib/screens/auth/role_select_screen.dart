@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/surface_card.dart';
 import 'sign_in_screen.dart';
 
@@ -59,6 +60,11 @@ class RoleSelectScreen extends StatelessWidget {
   }
 
   void _continue(BuildContext context, {required bool isOwnerPath}) {
+    // SignInScreen is *pushed* on top of AuthGate rather than swapped in by
+    // it, so it outlives any status change AuthGate reacts to - worth
+    // logging, since a route left on the stack looks identical to "signed
+    // in but bounced back to login" from the outside.
+    AppLog.auth('RoleSelect -> pushing SignInScreen', {'isOwnerPath': isOwnerPath});
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => SignInScreen(authState: authState, isOwnerPath: isOwnerPath),

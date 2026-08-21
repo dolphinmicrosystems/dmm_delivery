@@ -12,3 +12,11 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# dmm_delivery_debug.keystore is the exception: a shared, non-secret debug
+# keystore (password "android", the standard Android debug convention) whose
+# SHA-1 is registered on this app's Firebase project. Committing it keeps
+# every developer's local debug build signed with a fingerprint Google
+# Sign-In already trusts, instead of each machine's own
+# ~/.android/debug.keystore needing separate registration.
+!app/dmm_delivery_debug.keystore

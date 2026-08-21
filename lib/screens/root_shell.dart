@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../state/app_state.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
+import '../util/app_log.dart';
 import 'owner/owner_home_screen.dart';
 import 'owner/owner_settings_screen.dart';
 import 'rider/rider_active_screen.dart';
@@ -22,6 +23,9 @@ class RootShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Note this falls through to the owner shell for *any* non-driver role,
+    // including a null one - so log the role that actually drove the choice.
+    AppLog.owner('RootShell build', {'role': authState.role?.name, 'uid': authState.user?.uid});
     return authState.role == AuthRole.driver ? _DriverShell(authState: authState) : _OwnerShell(authState: authState);
   }
 }

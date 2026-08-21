@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../config/infra_config.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/surface_card.dart';
 import 'run_sheet_progress_screen.dart';
@@ -33,15 +34,29 @@ class _UploadRunSheetScreenState extends State<UploadRunSheetScreen> {
   String? _error;
 
   Future<void> _pickAndUpload() async {
+    AppLog.owner('pick run sheet PDF', {'roundKey': widget.roundKey ?? '<new>'});
     setState(() => _error = null);
     final file = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['pdf']);
-    if (file == null) return;
+    if (file == null) {
+      AppLog.owner('file pick canceled');
+      return;
+    }
     final bytes = await file.readAsBytes();
 
     const uuid = Uuid();
     final uploadId = uuid.v4();
     final roundKey = widget.roundKey ?? 'route-${uuid.v4()}';
     final ownerUid = widget.authState.user!.uid;
+
+    // Bucket + path together are what decide whether the backend's Storage
+    // trigger ever fires - the previous object-not-found bug was exactly a
+    // wrong bucket, so log the destination before the write, not after.
+    AppLog.owner('uploading run sheet', {
+      'bucket': InfraConfig.runSheetsBucket,
+      'path': '$roundKey/$uploadId.pdf',
+      'bytes': bytes.length,
+      'ownerUid': ownerUid,
+    });
 
     setState(() => _uploadProgress = 0);
 
@@ -62,12 +77,18 @@ class _UploadRunSheetScreenState extends State<UploadRunSheetScreen> {
 
     try {
       await task;
-    } catch (e) {
+      AppLog.owner('run sheet upload complete', {'uploadId': uploadId, 'roundKey': roundKey});
+    } catch (e, s) {
+      AppLog.owner.error('run sheet upload failed', e, s, {
+        'bucket': InfraConfig.runSheetsBucket,
+        'path': '$roundKey/$uploadId.pdf',
+      });
       if (mounted) setState(() => _error = 'Upload failed: $e');
       return;
     }
 
     if (!mounted) return;
+    AppLog.owner('open RunSheetProgressScreen', {'uploadId': uploadId});
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => RunSheetProgressScreen(authState: widget.authState, uploadId: uploadId),

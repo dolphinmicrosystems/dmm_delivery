@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../config/infra_config.dart';
+import '../util/app_log.dart';
 
 /// Who the signed-in Firebase user is, per the `role` custom claim the
 /// backend's beforeSignIn blocking function sets (see dmm-delivery-app's
@@ -19,6 +20,7 @@ enum AuthStatus { loading, signedOut, needsRole, signedIn, error }
 /// real identity.
 class AuthState extends ChangeNotifier {
   AuthState() {
+    AppLog.auth('AuthState created, subscribing to idTokenChanges');
     FirebaseAuth.instance.idTokenChanges().listen(_onIdTokenChanged);
   }
 
@@ -31,56 +33,83 @@ class AuthState extends ChangeNotifier {
   String? errorMessage;
 
   Future<void> _onIdTokenChanged(User? user) async {
+    AppLog.auth('idTokenChanged fired', {'uid': user?.uid, 'email': user?.email, 'statusBefore': status.name});
     this.user = user;
     if (user == null) {
       status = AuthStatus.signedOut;
       role = null;
+      AppLog.auth('no user -> signedOut');
       notifyListeners();
       return;
     }
 
     final tokenResult = await user.getIdTokenResult();
     final claim = tokenResult.claims?['role'] as String?;
+    // The full claim set matters here, not just `role`: a missing role claim
+    // is the difference between "signed in" and the needsRole dead-end, and
+    // it's worth seeing exactly what the backend actually returned.
+    AppLog.auth('token claims read', {
+      'roleClaim': claim,
+      'allClaims': tokenResult.claims?.keys.toList(),
+      'authTime': tokenResult.authTime,
+    });
     role = switch (claim) {
       'owner' => AuthRole.owner,
       'rider' => AuthRole.driver,
       _ => null,
     };
     status = role == null ? AuthStatus.needsRole : AuthStatus.signedIn;
+    AppLog.auth('status resolved', {'role': role?.name, 'status': status.name});
     notifyListeners();
   }
 
   Future<void> signInWithGoogle() async {
+    AppLog.auth('signInWithGoogle start', {'statusBefore': status.name});
     errorMessage = null;
     status = AuthStatus.loading;
     notifyListeners();
 
     try {
       if (!_googleSignInReady) {
+        AppLog.auth('initializing GoogleSignIn', {'serverClientId': InfraConfig.googleSignInServerClientId});
         await _googleSignIn.initialize(serverClientId: InfraConfig.googleSignInServerClientId);
         _googleSignInReady = true;
+        AppLog.auth('GoogleSignIn initialized');
       }
       final googleUser = await _googleSignIn.authenticate();
+      AppLog.auth('google account authenticated', {'email': googleUser.email, 'id': googleUser.id});
       final googleAuth = googleUser.authentication;
+      // A null idToken here yields a credential Firebase silently refuses,
+      // which reads downstream as "signed in but nothing happened" - so log
+      // its presence explicitly rather than the token itself.
+      AppLog.auth('google auth tokens', {'hasIdToken': googleAuth.idToken != null});
       final credential = GoogleAuthProvider.credential(idToken: googleAuth.idToken);
       final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+      AppLog.auth('firebase signInWithCredential ok', {
+        'uid': userCredential.user?.uid,
+        'isNewUser': userCredential.additionalUserInfo?.isNewUser,
+      });
       // Force a fresh token fetch rather than trusting whatever claims are
       // already cached locally - the beforeSignIn blocking function sets the
       // role claim server-side as part of *this* sign-in, and a stale local
       // token snapshot here would otherwise read back as "no role yet".
-      await userCredential.user?.getIdTokenResult(true);
+      final refreshed = await userCredential.user?.getIdTokenResult(true);
+      AppLog.auth('forced token refresh done', {'roleClaim': refreshed?.claims?['role']});
       // _onIdTokenChanged fires from the listener above (forceRefresh above
       // triggers it again with the up-to-date claims) and sets status.
-    } on FirebaseAuthException catch (e) {
+    } on FirebaseAuthException catch (e, s) {
+      AppLog.auth.error('FirebaseAuthException during sign-in', e, s, {'code': e.code});
       errorMessage = e.message ?? e.code;
       status = AuthStatus.error;
       notifyListeners();
-    } on GoogleSignInException catch (e) {
+    } on GoogleSignInException catch (e, s) {
       if (e.code != GoogleSignInExceptionCode.canceled) {
+        AppLog.auth.error('GoogleSignInException during sign-in', e, s, {'code': e.code.name});
         errorMessage = e.description ?? e.code.name;
         status = AuthStatus.error;
         notifyListeners();
       } else {
+        AppLog.auth('sign-in canceled by user -> signedOut');
         status = AuthStatus.signedOut;
         notifyListeners();
       }
@@ -88,6 +117,7 @@ class AuthState extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    AppLog.auth('signOut requested', {'uid': user?.uid});
     await FirebaseAuth.instance.signOut();
   }
 

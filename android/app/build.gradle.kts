@@ -36,6 +36,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // A project-scoped debug keystore, not the machine-wide
+            // ~/.android/debug.keystore - its SHA-1 is registered directly
+            // against this app's Firebase project, so Google Sign-In works
+            // for every developer who builds from this checkout, regardless
+            // of what other projects' debug keys happen to be on their
+            // machine. Password is the Android-tooling debug-keystore
+            // convention ("android"/"android"); it's not a real secret.
+            storeFile = file("dmm_delivery_debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

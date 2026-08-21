@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
@@ -21,6 +22,7 @@ class OwnerHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    AppLog.owner('OwnerHomeScreen build', {'uid': authState.user?.uid, 'role': authState.role?.name});
     return Scaffold(
       backgroundColor: AppColors.surfaceMuted,
       body: SafeArea(
@@ -46,6 +48,7 @@ class OwnerHomeScreen extends StatelessWidget {
   }
 
   void _startUpload(BuildContext context, {required String? roundKey, required String? roundLabel}) {
+    AppLog.owner('open UploadRunSheetScreen', {'roundKey': roundKey ?? '<new>', 'roundLabel': roundLabel});
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => UploadRunSheetScreen(authState: authState, roundKey: roundKey, roundLabel: roundLabel),
@@ -64,10 +67,18 @@ class _CircuitList extends StatelessWidget {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance.collection('circuits').orderBy('updated_at', descending: true).snapshots(),
       builder: (context, snapshot) {
+        // A firestore.rules rejection surfaces here as snapshot.hasError and
+        // otherwise renders as the innocuous "No routes yet" empty state -
+        // log it so a permission problem can't masquerade as no data.
+        if (snapshot.hasError) {
+          AppLog.owner.error('circuits stream failed', snapshot.error, snapshot.stackTrace);
+        }
         if (snapshot.connectionState == ConnectionState.waiting) {
+          AppLog.owner('circuits stream waiting');
           return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
         }
         final docs = snapshot.data?.docs ?? [];
+        AppLog.owner('circuits snapshot', {'count': docs.length, 'ids': docs.map((d) => d.id).toList()});
         if (docs.isEmpty) {
           return const SurfaceCard(
             padding: EdgeInsets.all(16),
@@ -120,10 +131,18 @@ class _CircuitCardState extends State<_CircuitCard> {
       ),
     );
     if (confirmed != true) {
+      AppLog.owner('delete route canceled', {'roundKey': widget.roundKey});
       if (mounted) setState(() => _revealDelete = false);
       return;
     }
-    await FirebaseFirestore.instance.collection('circuits').doc(widget.roundKey).delete();
+    AppLog.owner('deleting route', {'roundKey': widget.roundKey, 'round': round});
+    try {
+      await FirebaseFirestore.instance.collection('circuits').doc(widget.roundKey).delete();
+      AppLog.owner('route deleted', {'roundKey': widget.roundKey});
+    } catch (e, s) {
+      AppLog.owner.error('route delete failed', e, s, {'roundKey': widget.roundKey});
+      rethrow;
+    }
   }
 
   @override
@@ -137,6 +156,7 @@ class _CircuitCardState extends State<_CircuitCard> {
           setState(() => _revealDelete = false);
           return;
         }
+        AppLog.owner('open RouteMapScreen', {'roundKey': widget.roundKey});
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => RouteMapScreen(authState: widget.authState, roundKey: widget.roundKey)),
         );
