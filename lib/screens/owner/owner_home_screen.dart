@@ -90,7 +90,7 @@ class _CircuitList extends StatelessWidget {
   }
 }
 
-class _CircuitCard extends StatelessWidget {
+class _CircuitCard extends StatefulWidget {
   const _CircuitCard({required this.roundKey, required this.data, required this.authState});
 
   final String roundKey;
@@ -98,14 +98,50 @@ class _CircuitCard extends StatelessWidget {
   final AuthState authState;
 
   @override
+  State<_CircuitCard> createState() => _CircuitCardState();
+}
+
+class _CircuitCardState extends State<_CircuitCard> {
+  bool _revealDelete = false;
+
+  Future<void> _confirmDelete(BuildContext context, String round) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete route?'),
+        content: Text('"$round" will be removed from your list. This can\'t be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      if (mounted) setState(() => _revealDelete = false);
+      return;
+    }
+    await FirebaseFirestore.instance.collection('circuits').doc(widget.roundKey).delete();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final round = data['round'] as String? ?? 'Unnamed route';
-    final stopCount = data['stop_count'] as int? ?? 0;
+    final round = widget.data['round'] as String? ?? 'Unnamed route';
+    final stopCount = widget.data['stop_count'] as int? ?? 0;
 
     return InkWell(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => RouteMapScreen(authState: authState, roundKey: roundKey)),
-      ),
+      onTap: () {
+        if (_revealDelete) {
+          setState(() => _revealDelete = false);
+          return;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => RouteMapScreen(authState: widget.authState, roundKey: widget.roundKey)),
+        );
+      },
+      onLongPress: () => setState(() => _revealDelete = true),
       borderRadius: BorderRadius.circular(20),
       child: SurfaceCard(
         padding: const EdgeInsets.all(16),
@@ -129,14 +165,22 @@ class _CircuitCard extends StatelessWidget {
                 ],
               ),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => UploadRunSheetScreen(authState: authState, roundKey: roundKey, roundLabel: round),
+            if (_revealDelete)
+              IconButton(
+                onPressed: () => _confirmDelete(context, round),
+                icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                tooltip: 'Delete route',
+              )
+            else
+              TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        UploadRunSheetScreen(authState: widget.authState, roundKey: widget.roundKey, roundLabel: round),
+                  ),
                 ),
+                child: const Text('Upload sheet'),
               ),
-              child: const Text('Upload sheet'),
-            ),
           ],
         ),
       ),
