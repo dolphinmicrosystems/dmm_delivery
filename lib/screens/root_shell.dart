@@ -5,7 +5,8 @@ import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
 import 'owner/owner_home_screen.dart';
-import 'owner/owner_settings_screen.dart';
+import 'owner/owner_maps_screen.dart';
+import 'owner/owner_menu_drawer.dart';
 import 'rider/rider_active_screen.dart';
 import 'rider/rider_earnings_screen.dart';
 import 'rider/rider_orders_screen.dart';
@@ -44,18 +45,30 @@ class _OwnerShellState extends State<_OwnerShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Owner screens are bodies, not Scaffolds: the header (with its
+    // hamburger), the end drawer and the bottom bar are identical on both
+    // tabs in owner-home.html/owner-maps.html, so they're hosted once here
+    // and survive tab switches along with each tab's scroll position.
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: const _BlueDotAppBar(),
+      endDrawer: OwnerMenuDrawer(authState: widget.authState),
       body: IndexedStack(
         index: _tabIndex,
-        children: [OwnerHomeScreen(authState: widget.authState), OwnerSettingsScreen(authState: widget.authState)],
+        children: [
+          OwnerHomeScreen(authState: widget.authState),
+          OwnerMapsScreen(authState: widget.authState),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
-        onDestinationSelected: (index) => setState(() => _tabIndex = index),
+        onDestinationSelected: (index) {
+          AppLog.owner('owner tab selected', {'index': index});
+          setState(() => _tabIndex = index);
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
+          NavigationDestination(icon: Icon(Icons.map_outlined), label: 'Maps'),
         ],
       ),
     );

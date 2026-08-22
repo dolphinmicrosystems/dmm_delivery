@@ -136,10 +136,22 @@ class AuthState extends ChangeNotifier {
     });
   }
 
+  /// Drivers who have accepted - the roster behind the Owner's Maps board
+  /// and the Settings driver list.
   Stream<QuerySnapshot<Map<String, dynamic>>> acceptedDrivers() {
     return FirebaseFirestore.instance
         .collection('driver_invitations')
         .where('accepted_at', isNotEqualTo: null)
+        .snapshots();
+  }
+
+  /// Invitations sent but not yet accepted, for the Owner home "Invite
+  /// riders" count. `accepted_at` is null until before_sign_in_fn.py sets
+  /// it, so this and [acceptedDrivers] partition the collection.
+  Stream<QuerySnapshot<Map<String, dynamic>>> pendingInvites() {
+    return FirebaseFirestore.instance
+        .collection('driver_invitations')
+        .where('accepted_at', isNull: true)
         .snapshots();
   }
 }

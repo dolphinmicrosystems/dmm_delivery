@@ -49,7 +49,7 @@ class OwnerSettingsScreen extends StatelessWidget {
           PrimaryButton(
             label: 'Register driver',
             icon: Icons.person_add_alt_1_rounded,
-            onPressed: () => _showRegisterDriverDialog(context),
+            onPressed: () => showInviteDriverDialog(context, authState),
           ),
           const SizedBox(height: 16),
           _DriverList(authState: authState),
@@ -57,14 +57,21 @@ class OwnerSettingsScreen extends StatelessWidget {
       ),
     );
   }
+}
 
-  void _showRegisterDriverDialog(BuildContext context) {
-    final controller = TextEditingController();
-    String? error;
+/// Shared by this screen's "Register driver" button and the Owner home
+/// "Invite riders" quick action - the same invitation, reached from the two
+/// places an owner looks for it.
+///
+/// Email + Google sign-in is the interim mechanism; the prototype's
+/// phone + OTP flow replaces it (see plan.md, "Rider invitations by phone").
+void showInviteDriverDialog(BuildContext context, AuthState authState) {
+  final controller = TextEditingController();
+  String? error;
 
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setState) => AlertDialog(
           title: const Text('Register driver'),
           content: Column(
@@ -106,9 +113,8 @@ class OwnerSettingsScreen extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
+    ),
+  );
 }
 
 class _DriverList extends StatelessWidget {

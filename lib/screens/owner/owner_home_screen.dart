@@ -4,17 +4,14 @@ import 'package:flutter/material.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
-import '../../widgets/primary_button.dart';
+import '../../widgets/pill_badge.dart';
 import '../../widgets/section_label.dart';
-import '../../widgets/surface_card.dart';
-import 'route_map_screen.dart';
-import 'upload_run_sheet_screen.dart';
+import 'owner_routes_screen.dart';
+import 'owner_settings_screen.dart';
 
-/// FR3 (DMM-08-10) lite: the owner's real landing screen, replacing the
-/// mock Customer/Rider tabs. One card per circuit ("latest state per
-/// route" - see circuits/{roundKey} in dmm-delivery-app), ordered most
-/// recently updated first, so the owner never scans a list of dates to
-/// remember.
+/// The Owner's landing screen, ported from owner-home.html: a greeting and
+/// three quick actions, rather than a data list. The route list that used to
+/// live here moved to OwnerRoutesScreen, behind the "Upload sheet" action.
 class OwnerHomeScreen extends StatelessWidget {
   const OwnerHomeScreen({super.key, required this.authState});
 
@@ -23,185 +20,237 @@ class OwnerHomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppLog.owner('OwnerHomeScreen build', {'uid': authState.user?.uid, 'role': authState.role?.name});
-    return Scaffold(
-      backgroundColor: AppColors.surfaceMuted,
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {},
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const SectionLabel('Your routes'),
-              const SizedBox(height: 8),
-              _CircuitList(authState: authState),
-              const SizedBox(height: 24),
-              PrimaryButton(
-                label: 'New route',
-                icon: Icons.add_rounded,
-                onPressed: () => _startUpload(context, roundKey: null, roundLabel: null),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    // First name only - the prototype's "Kia ora, Aroha" is a greeting, and
+    // a greeting that reads out a full name or an email address stops
+    // sounding like one.
+    final displayName = authState.user?.displayName?.split(' ').first;
 
-  void _startUpload(BuildContext context, {required String? roundKey, required String? roundLabel}) {
-    AppLog.owner('open UploadRunSheetScreen', {'roundKey': roundKey ?? '<new>', 'roundLabel': roundLabel});
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => UploadRunSheetScreen(authState: authState, roundKey: roundKey, roundLabel: roundLabel),
-      ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      children: [
+        Text(
+          displayName == null ? 'Kia ora' : 'Kia ora, $displayName',
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, height: 1.15, letterSpacing: -0.5),
+        ),
+        const SizedBox(height: 4),
+        const Text("Run today's deliveries.", style: TextStyle(fontSize: 14, color: AppColors.inkMuted)),
+        const SizedBox(height: 20),
+        const SectionLabel('Quick actions'),
+        const SizedBox(height: 12),
+        _QuickAction(
+          badge: 'Calendar',
+          title: 'Delivery roster',
+          // Deliberately not faking the prototype's "12 riders scheduled
+          // this week": there is no roster data yet, and a made-up number on
+          // a real screen is indistinguishable from a broken one.
+          subtitle: 'Scheduling not built yet',
+          icon: Icons.calendar_month_rounded,
+          onPressed: null,
+        ),
+        const SizedBox(height: 16),
+        _InviteQuickAction(authState: authState),
+        const SizedBox(height: 16),
+        _QuickAction(
+          badge: 'Bulk import',
+          title: 'Upload sheet',
+          subtitle: 'Import drops from a run sheet PDF',
+          icon: Icons.cloud_upload_rounded,
+          onPressed: () {
+            AppLog.owner('open OwnerRoutesScreen');
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => OwnerRoutesScreen(authState: authState)),
+            );
+          },
+        ),
+      ],
     );
   }
 }
 
-class _CircuitList extends StatelessWidget {
-  const _CircuitList({required this.authState});
+/// The invites card, with a live count of outstanding invitations in place
+/// of the prototype's hardcoded "3 invites pending acceptance".
+class _InviteQuickAction extends StatelessWidget {
+  const _InviteQuickAction({required this.authState});
 
   final AuthState authState;
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance.collection('circuits').orderBy('updated_at', descending: true).snapshots(),
+      stream: authState.pendingInvites(),
       builder: (context, snapshot) {
-        // A firestore.rules rejection surfaces here as snapshot.hasError and
-        // otherwise renders as the innocuous "No routes yet" empty state -
-        // log it so a permission problem can't masquerade as no data.
         if (snapshot.hasError) {
-          AppLog.owner.error('circuits stream failed', snapshot.error, snapshot.stackTrace);
+          AppLog.owner.error('pending invites stream failed', snapshot.error, snapshot.stackTrace);
         }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          AppLog.owner('circuits stream waiting');
-          return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
-        }
-        final docs = snapshot.data?.docs ?? [];
-        AppLog.owner('circuits snapshot', {'count': docs.length, 'ids': docs.map((d) => d.id).toList()});
-        if (docs.isEmpty) {
-          return const SurfaceCard(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'No routes yet. Upload your first run sheet to get started.',
-              style: TextStyle(color: AppColors.inkMuted, fontSize: 13),
-            ),
-          );
-        }
-        return Column(
-          children: [
-            for (final doc in docs) ...[
-              _CircuitCard(roundKey: doc.id, data: doc.data(), authState: authState),
-              const SizedBox(height: 12),
-            ],
-          ],
+        final count = snapshot.data?.docs.length;
+        return _QuickAction(
+          badge: 'Invites',
+          title: 'Invite riders',
+          subtitle: switch (count) {
+            null => 'Checking invitations…',
+            0 => 'No invites pending acceptance',
+            1 => '1 invite pending acceptance',
+            _ => '$count invites pending acceptance',
+          },
+          icon: Icons.person_add_alt_1_rounded,
+          onPressed: () => showInviteDriverDialog(context, authState),
         );
       },
     );
   }
 }
 
-class _CircuitCard extends StatefulWidget {
-  const _CircuitCard({required this.roundKey, required this.data, required this.authState});
+/// One quick-action card. The prototype's shape - a full-width pill-topped
+/// band with the icon straddling its lower edge - is the whole visual
+/// identity of this screen, so it's reproduced rather than flattened into a
+/// stock ListTile.
+class _QuickAction extends StatelessWidget {
+  const _QuickAction({
+    required this.badge,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onPressed,
+  });
 
-  final String roundKey;
-  final Map<String, dynamic> data;
-  final AuthState authState;
+  final String badge;
+  final String title;
+  final String subtitle;
+  final IconData icon;
 
-  @override
-  State<_CircuitCard> createState() => _CircuitCardState();
-}
+  /// Null disables the card, which dims it rather than removing it - the
+  /// action is planned, and hiding it would make the screen look finished.
+  final VoidCallback? onPressed;
 
-class _CircuitCardState extends State<_CircuitCard> {
-  bool _revealDelete = false;
-
-  Future<void> _confirmDelete(BuildContext context, String round) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete route?'),
-        content: Text('"$round" will be removed from your list. This can\'t be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) {
-      AppLog.owner('delete route canceled', {'roundKey': widget.roundKey});
-      if (mounted) setState(() => _revealDelete = false);
-      return;
-    }
-    AppLog.owner('deleting route', {'roundKey': widget.roundKey, 'round': round});
-    try {
-      await FirebaseFirestore.instance.collection('circuits').doc(widget.roundKey).delete();
-      AppLog.owner('route deleted', {'roundKey': widget.roundKey});
-    } catch (e, s) {
-      AppLog.owner.error('route delete failed', e, s, {'roundKey': widget.roundKey});
-      rethrow;
-    }
-  }
+  /// Height of the tinted band the icon straddles, and the vertical radius
+  /// of the dome drawn over it.
+  static const _bandHeight = 80.0;
 
   @override
   Widget build(BuildContext context) {
-    final round = widget.data['round'] as String? ?? 'Unnamed route';
-    final stopCount = widget.data['stop_count'] as int? ?? 0;
-
-    return InkWell(
-      onTap: () {
-        if (_revealDelete) {
-          setState(() => _revealDelete = false);
-          return;
-        }
-        AppLog.owner('open RouteMapScreen', {'roundKey': widget.roundKey});
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => RouteMapScreen(authState: widget.authState, roundKey: widget.roundKey)),
+    final enabled = onPressed != null;
+    // The prototype's `rounded-t-[999px]` is a dome as wide as the card and
+    // as tall as the tinted band. A plain circular radius can't express
+    // that: the card's outline would scale 999 against the card's full
+    // height and the band against its own, drawing two different curves -
+    // one of which lands as a stray arc across the white body. An explicit
+    // ellipse keeps every layer on the same curve at any width.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final radius = BorderRadius.vertical(
+          top: Radius.elliptical(constraints.maxWidth / 2, _bandHeight),
+          bottom: const Radius.circular(20),
         );
+        return _buildCard(enabled, radius);
       },
-      onLongPress: () => setState(() => _revealDelete = true),
-      borderRadius: BorderRadius.circular(20),
-      child: SurfaceCard(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(color: AppColors.brandSoft, borderRadius: BorderRadius.circular(12)),
-              alignment: Alignment.center,
-              child: const Icon(Icons.alt_route_rounded, color: AppColors.brand),
+    );
+  }
+
+  Widget _buildCard(bool enabled, BorderRadius radius) {
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: Material(
+        color: Colors.white,
+        borderRadius: radius,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: radius,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: radius,
+              border: Border.all(color: AppColors.hairline),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.ink.withValues(alpha: 0.05),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10),
+                ),
+              ],
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(round, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Text('$stopCount stops', style: const TextStyle(fontSize: 12, color: AppColors.inkMuted)),
-                ],
-              ),
-            ),
-            if (_revealDelete)
-              IconButton(
-                onPressed: () => _confirmDelete(context, round),
-                icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
-                tooltip: 'Delete route',
-              )
-            else
-              TextButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        UploadRunSheetScreen(authState: widget.authState, roundKey: widget.roundKey, roundLabel: round),
+            child: Column(
+              children: [
+                SizedBox(
+                  height: _bandHeight,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.brandSoft,
+                          borderRadius: BorderRadius.only(topLeft: radius.topLeft, topRight: radius.topRight),
+                        ),
+                      ),
+                      Positioned(
+                        top: 28,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color: AppColors.brand,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.brand.withValues(alpha: 0.4),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
+                            ),
+                            child: Icon(icon, color: Colors.white, size: 24),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: const Text('Upload sheet'),
-              ),
-          ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 36, 20, 18),
+                  child: Column(
+                    children: [
+                      PillBadge(
+                        label: badge,
+                        background: AppColors.surfaceMuted,
+                        foreground: AppColors.inkMuted,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            enabled ? 'Open' : 'Coming soon',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              // A disabled action shouldn't wear the brand
+                              // colour that means "tap me".
+                              color: enabled ? AppColors.brand : AppColors.inkMuted,
+                            ),
+                          ),
+                          if (enabled) const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.brand),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

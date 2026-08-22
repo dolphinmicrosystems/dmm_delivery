@@ -9,8 +9,18 @@
 //                                    (project i-destiny-428904-s2, region us-west1)
 //   googleSignInServerClientId   <- Firebase Auth's Google IdP config
 //                                    (projects/i-destiny-428904-s2/defaultSupportedIdpConfigs/google.com)
+//   riderBoardUrl                <- rider-board Cloud Function's URL
+//                                    (project i-destiny-428904-s2, region us-west1)
 class InfraConfig {
   InfraConfig._();
+
+  /// The rider-board endpoint backing the Owner Maps screen. Called with the
+  /// signed-in owner's Firebase ID token; the function verifies the token and
+  /// the `role: owner` claim itself, since Cloud Run IAM can't.
+  ///
+  /// Empty when the function isn't deployed in the target project - callers
+  /// must check rather than parsing it blindly.
+  static const riderBoardUrl = 'https://us-west1-i-destiny-428904-s2.cloudfunctions.net/rider-board';
 
   /// The OAuth web client ID backing Firebase's Google sign-in provider.
   /// Not a secret (it's a public identifier apps embed directly), but

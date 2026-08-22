@@ -97,6 +97,19 @@ filters = {f['attribute']: f['value'] for f in d['eventTrigger']['eventFilters']
 print(filters['bucket'])
 ")
 
+# The Owner Maps screen's endpoint. Not fatal when absent: the function is a
+# later addition than the rest of this config, and an older project that
+# hasn't deployed it yet should still be able to regenerate everything else.
+# The app checks for the empty string rather than parsing a blank URL.
+RIDER_BOARD_URL=$(gcloud functions describe rider-board \
+  --region="$FUNCTION_REGION" --project="$PROJECT_ID" --gen2 \
+  --format="value(serviceConfig.uri)" "${ACCOUNT_FLAG[@]}" 2>/dev/null || true)
+if [ -z "$RIDER_BOARD_URL" ]; then
+  echo "warning: rider-board function not found in $PROJECT_ID/$FUNCTION_REGION -" >&2
+  echo "         riderBoardUrl will be empty and the Owner Maps screen will" >&2
+  echo "         report that it isn't configured. Deploy it, then re-run." >&2
+fi
+
 TOKEN=$(gcloud auth print-access-token "${ACCOUNT_FLAG[@]}")
 SIGNIN_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT_ID" \
   "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/defaultSupportedIdpConfigs/google.com" \
@@ -117,8 +130,18 @@ cat > "$OUT" <<EOF
 //                                    (project $PROJECT_ID, region $FUNCTION_REGION)
 //   googleSignInServerClientId   <- Firebase Auth's Google IdP config
 //                                    (projects/$PROJECT_ID/defaultSupportedIdpConfigs/google.com)
+//   riderBoardUrl                <- rider-board Cloud Function's URL
+//                                    (project $PROJECT_ID, region $FUNCTION_REGION)
 class InfraConfig {
   InfraConfig._();
+
+  /// The rider-board endpoint backing the Owner Maps screen. Called with the
+  /// signed-in owner's Firebase ID token; the function verifies the token and
+  /// the \`role: owner\` claim itself, since Cloud Run IAM can't.
+  ///
+  /// Empty when the function isn't deployed in the target project - callers
+  /// must check rather than parsing it blindly.
+  static const riderBoardUrl = '$RIDER_BOARD_URL';
 
   /// The OAuth web client ID backing Firebase's Google sign-in provider.
   /// Not a secret (it's a public identifier apps embed directly), but
