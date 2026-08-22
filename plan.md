@@ -1,76 +1,174 @@
-# Blue Dot — Owner plan
+# Blue Dot — plan
 
-Working notes for the Owner (RBAC `role: owner`) side of the app. Rider is
-out of scope for now beyond what already exists.
+Working notes for both roles. Screens are ports of the prototypes in
+`/Users/dolphin/Downloads/bluedot-prototype`.
 
-Screens are ports of the prototypes in `/Users/dolphin/Downloads/bluedot-prototype`
-(`owner-home.html`, `owner-maps.html`, `owner-menu.html`, `owner-rider.html`).
+Roles come from the `role` custom claim set server-side by
+`before_sign_in_fn.py`: `owner` and `rider` (the app calls the latter
+*driver*). `RootShell` picks the shell from that claim.
 
-## Shipped
+---
 
-**Owner home** (`owner-home.html`) — greeting plus three quick actions, no
-data list. Bottom bar is Home / Maps; the header carries the Blue Dot mark
-and a right-hand hamburger opening the menu drawer (`owner-menu.html`:
-Settings, About).
+# Owner
 
-| Quick action | State |
+RBAC `role: owner`. This is where the work has been.
+
+## Completed screens
+
+| Screen | File | Prototype | State |
+| --- | --- | --- | --- |
+| Home | `owner_home_screen.dart` | `owner-home.html` | Greeting + three quick actions |
+| Routes | `owner_routes_screen.dart` | — | The old home list, one tap in behind "Upload sheet" |
+| Maps board | `owner_maps_screen.dart` | `owner-maps.html` | One card per driver, pull-to-refresh |
+| Rider detail | `owner_rider_screen.dart` | `owner-rider.html` | Route polyline + pulsing position marker |
+| Menu drawer | `owner_menu_drawer.dart` | `owner-menu.html` | Right-hand drawer: Settings, About |
+| Settings | `owner_settings_screen.dart` | — | Account, driver list, invite, sign out |
+| Upload → review | `upload_run_sheet_screen.dart`, `run_sheet_progress_screen.dart`, `run_sheet_diff_screen.dart` | — | PDF upload, parse progress, diff confirm |
+| Route map | `route_map_screen.dart` | — | Per-route stop sequence on a full-screen map |
+
+Navigation: bottom bar is **Home / Maps**; the header carries the Blue Dot
+mark and a right-hand hamburger. Both tabs are bodies inside one `Scaffold` in
+`RootShell`, so header, drawer and bottom bar are hosted once and each tab
+keeps its scroll position.
+
+**Home quick actions**
+
+| Action | State |
 | --- | --- |
 | Calendar · Delivery roster | Deferred — card disabled, reads "Coming soon" |
-| Invites · Invite riders | Live, with a real pending-invite count; email + Google sign-in interim (see below) |
+| Invites · Invite riders | Live, with a real pending-invite count |
 | Bulk import · Upload sheet | Live → `OwnerRoutesScreen` → `UploadRunSheetScreen` |
 
-**Owner maps** (`owner-maps.html`) — the invited-driver board. One card per
-driver: name, presence, the next drop's company and address in grey, and its
-ETA in bold on the right. The prototype's map panel is deliberately dropped:
-the list is the whole canvas between header and nav bar, because a fixed map
-would consume the top third of the screen showing pins the owner cannot act
-on. Per-route geography already has a full-screen map in `RouteMapScreen`.
+**Design decisions worth not re-litigating**
 
-**Presence** is two states, not the prototype's three. "On route" is real and
-observable; "Picking up" and "Idle" were placeholder flavour. Everything that
-isn't actively running a route reads as **Offline**, whose ETA renders as an
-em dash — "0 min" would read as "arriving now".
+- The routes list moved *behind* "Upload sheet" rather than being deleted:
+  choosing which route a PDF belongs to is the first step of an upload, and
+  removing the list would have taken `RouteMapScreen` and route-delete with it.
+- The Maps board drops the prototype's map panel. The list is the whole canvas
+  — a fixed map would eat the top third of the screen showing pins the owner
+  cannot act on, and per-route geography already has `RouteMapScreen`.
+- **Presence is two states, not the prototype's three.** "On route" is real and
+  observable; "Picking up" and "Idle" were placeholder flavour. Anything not
+  actively running a route reads as **Offline**, whose ETA renders as an em
+  dash — "0 min" would read as "arriving now".
+- Nothing invents numbers the backend cannot supply. The roster card says
+  "Scheduling not built yet" rather than the prototype's "12 riders scheduled
+  this week". A made-up figure on a real screen is indistinguishable from a
+  broken one.
 
-## Rider board data shape
+## What is real vs mock
 
-The board is fed one **summary document per driver**, not the driver's stop
-list and not a flat list of all drops:
+The single most useful thing in this document. **Real** means it came from the
+customer's actual data:
+
+| Real | Source |
+| --- | --- |
+| Customer names, addresses, phones, emails, `seq_order` | Parsed from the actual run sheet PDFs in the run_sheets bucket |
+| Stop coordinates | Firestore `addresses` geocode cache, written by the Phase 1 pipeline — no Maps API calls to read them |
+| Auth, role claims, driver invitations | Firebase Auth + `driver_invitations`, real end to end |
+| `circuits`, `delivery_run`, `run_sheet_upload` | Real pipeline documents |
+
+**Mock**, all of it labelled in the API response so nothing downstream can
+mistake it for production data:
+
+| Mock | Where | Marker |
+| --- | --- | --- |
+| 6 drivers (Pawan Arora, Tama R., Mele F., Ari H., Nikau P., Sina T.) | `demo_board_enrichment.py` | `demo_mode: true` |
+| Driver → stop assignment (contiguous chunks) | same | same |
+| `presence` (on_route / offline, ~65% live) | same | same |
+| `eta_minutes` (3–25 min, re-rolled per request) | same | same |
+| Route shape | `dunedin_mock_route.json` | `route.source: "static-mock"` |
+| Rider position on the route | `rider_map.py` | `position.source: "randomised-mock"` |
+| Driver name when demo mode is off | `build_rider_board.py` | hardcoded `"Pawan Arora"` |
+
+The rider detail screen shows a **"Mock route & position"** badge driven by
+those `source` fields, not by a hardcoded flag — it disappears by itself once
+the backend sends real routes and positions.
+
+Turn all of it off with `board_demo_drivers = 0` in `terraform.tfvars`. The
+board then describes only what the bucket actually contains: one driver,
+real stops, no presence, no ETA.
+
+Notes on the mock choices, so they aren't misread as bugs:
+
+- The route uses **real geocoded coordinates** walked in naive
+  nearest-neighbour order. It is **not** computed by Valhalla, which is why
+  it cuts across blocks in places.
+- Drivers get **contiguous** chunks of the run, not round-robin, so each works
+  a zone and their `next_stop` address is coherent.
+- The roster (who, presence, which stops) is **seeded from the bucket
+  contents**, so pull-to-refresh doesn't reshuffle everyone — that would read
+  as a bug. Only the ETA re-rolls, because that is the value which genuinely
+  changes minute to minute.
+- Marker progress is clamped to 0.08–0.92 so it never parks exactly on an end
+  pin, which reads as "stopped" rather than "in transit".
+
+## Board API
+
+Two read-only endpoints on the `rider-board` gen2 function, called directly
+from the app with the owner's Firebase ID token:
 
 ```
-rider_board/{riderUid}
-  driver_name   : string
-  presence      : "on_route" | "offline"
-  eta_minutes   : int | null      # to the next drop
-  drops_left    : int
-  next_stop     : { customer_name, address }
-  updated_at    : timestamp
+GET /              board — every stop in the bucket, grouped by driver
+GET /rider/<key>   one rider's route shape and position
+```
+
+`allUsers` opens the Cloud Run IAM gate only — IAM cannot evaluate a Firebase
+token, so the choice is every request or none. Authorization lives inside the
+function: `_require_owner()` rejects anything without a valid ID token
+carrying `role: owner` **before a single object is read**. That check is the
+only thing between the internet and the bucket's customer PII. Verified
+against the deployed endpoint: no token and a garbage token both return 401.
+
+The client fetches a fresh token per request via `getIdToken()`. Firebase ID
+tokens expire after an hour; a token cached at sign-in starts returning 401s
+mid-session.
+
+**Board shape** — one summary object per driver, not the driver's stop list
+and not a flat list of all drops:
+
+```
+{ rider_key, driver_name, presence, eta_minutes, drops_left,
+  next_stop: { customer_name, address }, stops: [...] }
 ```
 
 Why per-driver rather than a flat `List<driver, seq, eta, drops>`:
 
-1. **`driver_name` is a label, not an identity.** Grouping cards on a display
-   string breaks on duplicates and renames, and `firestore.rules` cannot gate
-   on it. The rules already join on `rider_id == request.auth.uid`.
-2. **Fan-out.** The board draws one card per driver, so one document per
-   driver means a driver moving repaints one card. A flat list pushes every
-   drop of every driver to every owner device on every stop update.
-3. **ETA and drops-left are server-derived** — they can't be computed on the
-   client without the full stop list plus traffic, which is the payload being
-   avoided.
+1. **`driver_name` is a label, not an identity.** Grouping on a display string
+   breaks on duplicates and renames, and `firestore.rules` cannot gate on it —
+   the rules already join on `rider_id == request.auth.uid`.
+2. **Fan-out.** One card per driver means one document per driver repaints one
+   card. A flat list pushes every drop of every driver to every owner device on
+   every stop update.
+3. **ETA and drops-left are server-derived** — not computable client-side
+   without the full stop list plus traffic, which is the payload being avoided.
 
-The ordered detail stays where it already lives:
-`delivery_run/{runId}/delivery_stop/{stopId}` ordered by `seq_order`, read
-only when drilling into a single rider (`owner-rider.html`, not yet built).
+**Map data is data, never an image.** The endpoint returns an encoded polyline
+and a position; the client renders tiles, overlay and marker, because it owns
+the viewport — a server-rendered map is wrong the moment the owner pans. This
+is the split production tracking uses. `shape_format` travels with the payload
+rather than being assumed: decoding a precision-6 shape as 5 doesn't fail, it
+silently lands the route ten degrees away.
 
-### Not yet deployed
+An earlier draft cached a Google Static Maps image in a bucket. Dropped, along
+with the Static Maps API enablement, the API-key restriction widening and the
+cache bucket it needed.
 
-No Cloud Function writes `rider_board`, and `firestore.rules` has no match
-block for it. Until both exist the board is built from
-`driver_invitations` (accepted) and every driver reads as offline with no
-ETA. `RiderBoardEntry.fromBoardDoc` is the swap-in point.
+## Owner — next
 
-Rules needed, mirroring the read-only pattern the other owner-facing
-collections use:
+**Driver location (next up).** Replace `randomised-mock` with real positions:
+GPS pings from the driver app, map-matched server-side, with routing from
+Valhalla plus the Maps API. "Live" then means *this driver's GPS is
+reporting*, which is what the presence dot should have meant all along.
+
+**Push to DB with owner → driver tenancy.** The current bucket-pull is
+scaffolding. Stops belong in the database scoped to an owner's driver list,
+not re-parsed from PDFs on every request.
+
+**Firestore instead of HTTP polling.** Once the backend writes
+`rider_board/{riderUid}`, the board becomes a snapshot listener with live
+updates and pull-to-refresh stops mattering. The response shape already
+matches, so it's a transport swap, not a rewrite. Needs a rules block:
 
 ```
 match /rider_board/{riderUid} {
@@ -79,23 +177,15 @@ match /rider_board/{riderUid} {
 }
 ```
 
-## Deferred
+**Delivery roster / calendar** — the disabled home quick action. No schedule
+data exists yet.
 
-**Delivery roster / calendar** — the first home quick action. No schedule
-data exists. Card is visibly disabled rather than hidden, so the screen
-doesn't look finished.
-
-**Rider invitations by phone + OTP** — the prototype's intended flow. Today
-`showInviteDriverDialog` takes a Gmail address and writes
-`driver_invitations/{lowercased-email}`; acceptance is a Google sign-in, with
-`before_sign_in_fn.py` setting `accepted_at` and the `role` claim. Moving to
-phone + OTP changes the document key (email → E.164 number), the identity
-provider (Google → Firebase phone auth), and the `isValidInvite()` rule that
-currently asserts `driver_email == email`. To be specified.
-
-**Owner rider detail** (`owner-rider.html`) — the drill-down from a board
-card. Needs the per-run stop list, so it depends on `rider_board` carrying a
-`current_run_id`.
+**Rider invitations by phone + OTP.** Today `showInviteDriverDialog` takes a
+Gmail address and writes `driver_invitations/{lowercased-email}`; acceptance is
+a Google sign-in, with `before_sign_in_fn.py` setting `accepted_at` and the
+`role` claim. Moving to phone + OTP changes the document key (email → E.164),
+the identity provider (Google → Firebase phone auth), and the `isValidInvite()`
+rule that currently asserts `driver_email == email`. To be specified.
 
 ## Known gaps in the upload flow
 
@@ -110,3 +200,61 @@ Found while tracing a stalled upload (`run_sheet_upload` stuck at
 - An upload left unconfirmed is unreachable: home lists only `circuits`, and
   `circuits/{roundKey}` is written by `confirm-run-sheet` on confirm, so a
   pending review has no route back to it.
+
+---
+
+# Rider
+
+RBAC `role: rider`. **Not started.** Everything below is either inherited
+prototype mock or backend groundwork that has no driver-facing UI yet.
+
+## Current state
+
+`RootShell._DriverShell` still renders the **original prototype's three mock
+tabs** — Orders, Active, Earnings (`rider_orders_screen.dart`,
+`rider_active_screen.dart`, `rider_earnings_screen.dart`). They are driven
+entirely by hardcoded fields in `AppState`, touch no backend, and are
+unchanged from before the Owner rework. A driver signing in today lands on
+fabricated jobs and earnings.
+
+What *does* work for a driver: invitation, Google sign-in, and the `role:
+rider` claim. `before_sign_in_fn.py` gates acceptance on a valid, unexpired
+invitation and stamps `accepted_at`.
+
+Backend groundwork with no rider UI attached:
+
+- `firestore.rules` already scopes a rider to their own run —
+  `delivery_run` read requires `rider_id == request.auth.uid`, and
+  `delivery_stop` update is limited to `status`, `delivered_at`,
+  `pod_photo_url`, `rider_note`.
+- A `pod_photos` bucket exists for proof-of-delivery.
+- `check-deviation` and `send-invitation-email` functions are deployed.
+
+## Rider — next
+
+- **Replace the three mock tabs** with the driver-facing circuit view
+  (DMM-11+): the assigned run, stops in `seq_order`, next drop first.
+- **Mark delivered** — the one write riders are allowed, already permitted by
+  the rules: status, timestamp, POD photo, note.
+- **GPS reporting** — the other half of the owner's live board. This is the
+  piece that makes "On route" mean something.
+- **Assignment.** Nothing sets `delivery_run.rider_id` today; it is null on
+  every document, which is precisely why the owner board has to fabricate
+  driver → stop assignment.
+
+---
+
+# Cross-cutting
+
+- **Tiles** come from CartoDB's free basemaps (inherited from
+  `RouteMapScreen`). Fine for development; needs a paid or self-hosted tile
+  source before real owners use this.
+- **No widget tests.** `test/widget_test.dart` covered the deleted Customer
+  role and could no longer boot once `MyApp` required Firebase
+  initialisation. Model and decoder logic is unit-tested; widget-level
+  coverage of the current screens needs a Firebase fake.
+- **`get_addresses_credentials.json` is committed** in the backend repo — a
+  live service-account private key. Wants rotating and purging from history.
+- **`SignInScreen` carries a regression guard** at the top of the file. It is
+  pushed on top of `AuthGate`, so it must dismiss itself; read the header
+  before changing it.
