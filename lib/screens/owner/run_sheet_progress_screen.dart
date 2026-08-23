@@ -6,7 +6,7 @@ import '../../theme/app_colors.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/stage_progress_bar.dart';
 import '../../widgets/surface_card.dart';
-import 'run_sheet_diff_screen.dart';
+import 'run_sheet_review_screen.dart';
 
 class RunSheetProgressScreen extends StatefulWidget {
   const RunSheetProgressScreen({super.key, required this.authState, required this.uploadId});
@@ -42,7 +42,11 @@ class _RunSheetProgressScreenState extends State<RunSheetProgressScreen> {
               _navigated = true;
               Navigator.of(context).pushReplacement(
                 MaterialPageRoute(
-                  builder: (_) => RunSheetDiffScreen(authState: widget.authState, uploadId: widget.uploadId, data: data),
+                  builder: (_) => RunSheetReviewScreen(
+                    authState: widget.authState,
+                    uploadId: widget.uploadId,
+                    data: data,
+                  ),
                 ),
               );
             }
@@ -66,7 +70,10 @@ class _RunSheetProgressScreenState extends State<RunSheetProgressScreen> {
                           style: const TextStyle(color: Colors.red, fontSize: 13),
                         ),
                         const SizedBox(height: 16),
-                        PrimaryButton(label: 'Back to routes', onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst)),
+                        PrimaryButton(
+                          label: 'Back to routes',
+                          onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
+                        ),
                       ],
                     ],
                   ),
