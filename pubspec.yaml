@@ -44,6 +44,10 @@ dependencies:
   latlong2: ^0.10.1
   uuid: ^4.6.0
   http: ^1.6.0
+  # Direct (was already present transitively via firebase): the depot's
+  # coordinates are looked up in the backend's `addresses` geocode cache,
+  # whose document id is a sha256 of the address - see DepotLocator.
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:
