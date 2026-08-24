@@ -11,8 +11,14 @@ class StageProgressBar extends StatelessWidget {
 
   static const _stages = ['parsing', 'geocoding', 'optimizing', 'diffing'];
 
+  /// Both route-reuse statuses occupy the optimizer's slot in the stepper:
+  /// they are the same stage of the same pipeline, reached without a routing
+  /// call. Only the label below distinguishes them, because only the label
+  /// needs to.
+  static const _optimizeStageAliases = ['reusing_route', 'merging_route'];
+
   int get _stageIndex {
-    final normalized = status == 'reusing_route' ? 'optimizing' : status;
+    final normalized = _optimizeStageAliases.contains(status) ? 'optimizing' : status;
     final idx = _stages.indexOf(normalized);
     if (idx >= 0) return idx;
     if (const ['ready_for_review', 'no_changes', 'confirmed'].contains(status)) return _stages.length;
@@ -23,7 +29,8 @@ class StageProgressBar extends StatelessWidget {
         'parsing' => 'Reading run sheet…',
         'geocoding' => 'Locating addresses…',
         'optimizing' => 'Optimizing route…',
-        'reusing_route' => 'Reusing existing route…',
+        'reusing_route' => 'Reusing your stop order…',
+        'merging_route' => 'Keeping your stop order…',
         'diffing' => 'Comparing with last upload…',
         'ready_for_review' => 'Ready to review',
         'no_changes' => 'No changes captured',

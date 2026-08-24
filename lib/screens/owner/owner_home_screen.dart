@@ -11,7 +11,7 @@ import 'owner_settings_screen.dart';
 
 /// The Owner's landing screen, ported from owner-home.html: a greeting and
 /// three quick actions, rather than a data list. The route list that used to
-/// live here moved to OwnerRoutesScreen, behind the "Upload sheet" action.
+/// live here moved to OwnerRoutesScreen, behind the "Update routes" action.
 class OwnerHomeScreen extends StatelessWidget {
   const OwnerHomeScreen({super.key, required this.authState});
 
@@ -51,10 +51,15 @@ class OwnerHomeScreen extends StatelessWidget {
         _InviteQuickAction(authState: authState),
         const SizedBox(height: 16),
         _QuickAction(
-          badge: 'Bulk import',
-          title: 'Upload sheet',
-          subtitle: 'Import drops from a run sheet PDF',
-          icon: Icons.cloud_upload_rounded,
+          // "Upload sheet" named the file rather than the outcome, and the
+          // outcome is the part that isn't obvious: an existing route keeps
+          // its name, its stop order and its delivery instructions, and only
+          // takes on what this week's sheet actually changed. Owners read
+          // "upload" as "replace".
+          badge: 'Run sheets',
+          title: 'Update routes',
+          subtitle: 'Bring a route up to date from its latest PDF',
+          icon: Icons.published_with_changes_rounded,
           onPressed: () {
             AppLog.owner('open OwnerRoutesScreen');
             Navigator.of(context).push(

@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../models/pending_changes.dart';
+import '../../models/route_name.dart';
+import '../../models/run_sheet_diff.dart';
 import '../../models/run_stop.dart';
 import '../../services/depot_locator.dart';
 import '../../state/auth_state.dart';
@@ -30,6 +33,10 @@ import '../../widgets/surface_card.dart';
 ///     here" is the actual content of a run sheet.
 ///   * the load-out total by product sits above the list, so the van is
 ///     packed from the same screen the route is approved on.
+///   * the route's name is editable here, because this is the screen where
+///     the owner is already deciding what this route *is*. Left alone it
+///     stays whatever the sheet's "Round:" heading said - "Run 2" and the
+///     like, which is a filing code rather than a name.
 class RunSheetReviewScreen extends StatefulWidget {
   const RunSheetReviewScreen({
     super.key,
@@ -60,19 +67,79 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   LatLng? _depot;
   int _skipped = 0;
 
+  late final TextEditingController _nameController;
+  String? _nameError;
+
+  /// The name this route already had, to tell an edit from an untouched
+  /// field. Typing the same name back is not a rename, and must not flip
+  /// the route from following the sheet to overriding it.
+  late final String? _originalName;
+
   /// True once the owner has dragged anything. Gates whether Confirm sends a
   /// manual order at all - an untouched list must stay the optimizer's
   /// result, not be re-asserted by the client as a hand-picked order.
   bool _reordered = false;
   bool _submitting = false;
 
-  Map<String, dynamic> get _diff => (widget.data['diff'] as Map<String, dynamic>?) ?? const {};
+  RunSheetDiff get _diff => RunSheetDiff.fromMap(widget.data['diff'] as Map<String, dynamic>?);
   String? get _draftRunId => widget.data['draft_run_id'] as String?;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+    // route_name is resolved server-side and already accounts for a name the
+    // owner gave this route on an earlier upload; `round` is only the fallback
+    // for uploads written before naming existed.
+    _originalName = widget.data['route_name'] as String? ?? widget.data['round'] as String?;
+    _nameController = TextEditingController(text: _originalName ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  /// What leaving this screen right now would throw away. Both halves are
+  /// decisions the owner made by hand and neither is written anywhere until
+  /// Confirm, so both are worth stopping for.
+  PendingChanges get _pendingChanges => PendingChanges(
+        renamed: RouteName.isRenameOf(_nameController.text, _originalName),
+        reordered: _reordered,
+      );
+
+  /// Back was pressed with unapplied edits. Unlike the update screen this
+  /// offers no "save" - the two ways to resolve a review are already on
+  /// screen as Confirm and Discard, and a third path that half-applied one
+  /// of them would leave an upload in a state neither button produces.
+  Future<void> _confirmLeave(PendingChanges pending) async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave without confirming?'),
+        content: Text(
+          '${pending.summary} won\u2019t be applied, and this run sheet stays waiting for review. '
+          'Use Confirm to make it the live route, or Discard to throw the upload away.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Keep reviewing')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Leave')),
+        ],
+      ),
+    );
+    if (leave != true || !mounted) {
+      AppLog.owner('leave review canceled', {'uploadId': widget.uploadId});
+      return;
+    }
+    AppLog.owner('leaving review unconfirmed', {
+      'uploadId': widget.uploadId,
+      'renamed': pending.renamed,
+      'reordered': pending.reordered,
+    });
+    // Navigator.pop, not maybePop: PopScope gates the latter and would ask
+    // again immediately.
+    Navigator.of(context).pop();
   }
 
   Future<_ReviewData> _load() async {
@@ -131,11 +198,27 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   }
 
   Future<void> _respond(String status) async {
-    setState(() => _submitting = true);
+    final renamed = status == 'confirmed' && RouteName.isRenameOf(_nameController.text, _originalName);
+    if (renamed) {
+      // Checked before the write, not after: the rules cap the name's length
+      // and reject the whole confirm if it's over, which surfaces as a bare
+      // permission-denied and reads as a sign-in problem.
+      final nameError = RouteName.validationError(_nameController.text);
+      if (nameError != null) {
+        setState(() => _nameError = nameError);
+        return;
+      }
+    }
+
+    setState(() {
+      _submitting = true;
+      _nameError = null;
+    });
     final manualOrder = [for (final stop in _stops) stop.id];
     AppLog.owner('run sheet $status', {
       'uploadId': widget.uploadId,
       'reordered': _reordered,
+      'renamed': renamed,
       'stops': manualOrder.length,
     });
 
@@ -143,22 +226,36 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
       await FirebaseFirestore.instance.collection('run_sheet_upload').doc(widget.uploadId).update({
         'status': status,
         if (status == 'confirmed' && _reordered) 'manual_order': manualOrder,
+        // Only when a person actually changed it. An untouched field leaves
+        // the backend's own route_name standing, and leaves the route
+        // following the sheet's heading rather than pinning it to a name
+        // nobody chose - see _resolve_route_name in
+        // process_run_sheet_upload.py for the other half of that rule.
+        if (renamed) ...{
+          'route_name': RouteName.toSubmit(_nameController.text)!,
+          'route_name_source': 'owner',
+        },
       });
       if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('run sheet $status failed', error, stack);
       if (!mounted) return;
       setState(() => _submitting = false);
-      // A reordered confirm is rejected until firestore.rules allows
-      // `manual_order` alongside `status` (see this repo's plan doc and the
-      // backend change list). Saying so beats a bare "permission denied",
-      // which reads as a sign-in problem.
-      final reorderBlocked = error.code == 'permission-denied' && _reordered;
+      // A reordered or renamed confirm is rejected until firestore.rules
+      // allows those fields alongside `status`. Saying so beats a bare
+      // "permission denied", which reads as a sign-in problem.
+      final blockedFields = status != 'confirmed'
+          ? const <String>[]
+          : [
+              if (_reordered) 'a custom stop order',
+              if (renamed) 'a route name',
+            ];
+      final rulesBlocked = error.code == 'permission-denied' && blockedFields.isNotEmpty;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            reorderBlocked
-                ? 'Saving a custom stop order needs the backend rules update deployed first.'
+            rulesBlocked
+                ? 'Saving ${blockedFields.join(' and ')} needs the backend rules update deployed first.'
                 : 'Could not $status this run sheet: ${error.message ?? error.code}',
           ),
         ),
@@ -168,10 +265,34 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // Rebuilt per keystroke so `canPop` tracks the name field; `_reordered`
+    // already arrives through setState. See the update screen for why
+    // PopScope needs the rebuild rather than reading state at pop time.
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _nameController,
+      builder: (context, _, child) {
+        final pending = _pendingChanges;
+        return PopScope(
+          canPop: pending.isEmpty,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _confirmLeave(pending);
+          },
+          child: child!,
+        );
+      },
+      child: Scaffold(
       backgroundColor: AppColors.surfaceMuted,
       appBar: AppBar(
-        title: Text(widget.data['round'] as String? ?? 'Review run sheet'),
+        // Follows the name field below rather than restating the stored
+        // name, so renaming a route reads as renaming it and not as editing
+        // some other value that happens to be shown twice.
+        title: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _nameController,
+          builder: (context, value, _) {
+            final name = value.text.trim();
+            return Text(name.isEmpty ? 'Review run sheet' : name, overflow: TextOverflow.ellipsis);
+          },
+        ),
         actions: [
           // A real action, not a status pill. The pill that used to sit here
           // read as a button and did nothing when tapped, which is worse
@@ -228,6 +349,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
           );
         },
       ),
+      ),
     );
   }
 
@@ -250,6 +372,12 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         totals: totals,
         skipped: _skipped,
         depotResolved: _depot != null,
+        nameController: _nameController,
+        nameError: _nameError,
+        nameEnabled: !_submitting,
+        onNameChanged: () {
+          if (_nameError != null) setState(() => _nameError = null);
+        },
       ),
       itemCount: _stops.length,
       itemBuilder: (context, index) {
@@ -318,8 +446,9 @@ class _ReviewData {
   final int skipped;
 }
 
-/// Everything above the draggable list: what changed, what's going on the
-/// van, and the caveats worth surfacing before an approval.
+/// Everything above the draggable list: what this route is called, what
+/// changed, what's going on the van, and the caveats worth surfacing before
+/// an approval.
 class _ReviewHeader extends StatelessWidget {
   const _ReviewHeader({
     required this.diff,
@@ -329,9 +458,13 @@ class _ReviewHeader extends StatelessWidget {
     required this.totals,
     required this.skipped,
     required this.depotResolved,
+    required this.nameController,
+    required this.nameError,
+    required this.nameEnabled,
+    required this.onNameChanged,
   });
 
-  final Map<String, dynamic> diff;
+  final RunSheetDiff diff;
   final bool noChanges;
   final int stopCount;
   final int unitCount;
@@ -339,15 +472,55 @@ class _ReviewHeader extends StatelessWidget {
   final int skipped;
   final bool depotResolved;
 
+  /// Owned by the screen's State, not by this widget: the list this header
+  /// sits in rebuilds on every drag, and a controller created here would
+  /// lose the owner's half-typed name each time a stop moved.
+  final TextEditingController nameController;
+  final String? nameError;
+  final bool nameEnabled;
+  final VoidCallback onNameChanged;
+
   @override
   Widget build(BuildContext context) {
-    final added = (diff['added'] as List?) ?? const [];
-    final removed = (diff['removed'] as List?) ?? const [];
-    final changed = (diff['content_changed'] as List?) ?? const [];
+    final orderNote = diff.orderNote;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const SectionLabel('Route name'),
+        const SizedBox(height: 8),
+        SurfaceCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: nameController,
+                enabled: nameEnabled,
+                maxLength: RouteName.maxLength,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: InputDecoration(
+                  hintText: 'e.g. Mosgiel morning',
+                  border: const OutlineInputBorder(),
+                  errorText: nameError,
+                  counterText: '',
+                ),
+                onChanged: (_) => onNameChanged(),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                // Naming the route and sequencing it are the same decision,
+                // so they are made on the same screen: this is the route,
+                // called this, run in this order.
+                'Saved when you confirm. Later sheets won’t rename it.',
+                style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        const SectionLabel('This upload'),
+        const SizedBox(height: 8),
         SurfaceCard(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -367,7 +540,7 @@ class _ReviewHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _changeSummary(added.length, removed.length, changed.length),
+                      diff.changeSummary,
                       style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
                     ),
                   ],
@@ -376,9 +549,16 @@ class _ReviewHeader extends StatelessWidget {
             ],
           ),
         ),
-        if (diff['round_mismatch'] == true) ...[
+        // Not a warning - the opposite. It answers the question a re-upload
+        // actually raises ("did I just lose the order I set last week?"),
+        // which otherwise goes unanswered until a driver is out on the run.
+        if (orderNote != null) ...[
           const SizedBox(height: 10),
-          _Warning('This PDF says "${diff['pdf_round']}", which differs from the route you selected.'),
+          _Note(orderNote),
+        ],
+        if (diff.roundMismatch) ...[
+          const SizedBox(height: 10),
+          _Warning('This PDF says "${diff.pdfRound}", which differs from the sheet this route was built from.'),
         ],
         if (skipped > 0) ...[
           const SizedBox(height: 10),
@@ -414,14 +594,30 @@ class _ReviewHeader extends StatelessWidget {
       ],
     );
   }
+}
 
-  static String _changeSummary(int added, int removed, int changed) {
-    final parts = [
-      if (added > 0) '$added added',
-      if (removed > 0) '$removed removed',
-      if (changed > 0) '$changed updated',
-    ];
-    return parts.isEmpty ? 'No changes since the last sheet' : parts.join(' · ');
+/// A neutral piece of information, styled apart from _Warning so that "your
+/// order was kept" doesn't arrive looking like something went wrong.
+class _Note extends StatelessWidget {
+  const _Note(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return SurfaceCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.low_priority_rounded, size: 16, color: AppColors.brand),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(message, style: const TextStyle(fontSize: 12, color: AppColors.brand)),
+          ),
+        ],
+      ),
+    );
   }
 }
 

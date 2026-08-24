@@ -37,9 +37,26 @@ keeps its scroll position.
 | --- | --- |
 | Calendar · Delivery roster | Deferred — card disabled, reads "Coming soon" |
 | Invites · Invite riders | Live, with a real pending-invite count |
-| Bulk import · Upload sheet | Live → `OwnerRoutesScreen` → `UploadRunSheetScreen` |
+| Run sheets · Update routes | Live → `OwnerRoutesScreen` → `UploadRunSheetScreen` |
 
 **Design decisions worth not re-litigating**
+
+- **"Update", not "Upload sheet".** The old label named the file and left the outcome to be guessed at,
+  and owners read "upload" as "replace" — which is exactly what a re-upload must not do. The card action,
+  the home quick action and the upload screen all now describe the outcome: this route, brought up to
+  date, keeping what you have already decided about it.
+- **A route is named by a person, not by a filing code.** The PDF's `Round: Run 2` gives the default,
+  because something has to, but "Run 2" is a code and not a name. It is editable in three places —
+  on upload, on the review screen next to the drag-reorder, and by long-pressing a card in the route
+  list — and `round_source: 'owner'` is what keeps next week's sheet from taking the name back. The
+  review screen is the important one of the three: naming a route and sequencing it are the same
+  decision, so they are made on the same screen.
+- **A re-upload keeps the owner's stop order even when the stop set changes.** It used to keep it only
+  when the addresses were identical; one new customer re-optimized the whole run and silently discarded
+  a sequence someone had dragged into place. Now the confirmed order is kept for every surviving stop
+  and new ones are slotted in by cheapest insertion, with no routing call. The review screen states
+  which of the three strategies ran, because a sequence that quietly reverted to the optimizer's looks
+  identical to one that didn't until a driver is halfway through the run.
 
 - The routes list moved *behind* "Upload sheet" rather than being deleted:
   choosing which route a PDF belongs to is the first step of an upload, and
@@ -186,6 +203,49 @@ a Google sign-in, with `before_sign_in_fn.py` setting `accepted_at` and the
 `role` claim. Moving to phone + OTP changes the document key (email → E.164),
 the identity provider (Google → Firebase phone auth), and the `isValidInvite()`
 rule that currently asserts `driver_email == email`. To be specified.
+
+## Leaving a screen mid-edit
+
+Back from the update screen or the review screen asks before throwing work away — but **only when there
+is work to throw away**. The name is compared with `RouteName.isRenameOf`, so re-spacing it or typing it
+back character for character is not a change and raises nothing; the review screen adds "did you drag a
+stop".
+
+The two dialogs differ on purpose:
+
+- **Update screen** offers *Save name* alongside Discard. The circuit already exists and renaming it needs
+  no PDF, so an owner who opened the screen only to fix a name can finish there instead of backing out,
+  losing it, and retyping it in the route list. A brand-new route has no `circuits/{roundKey}` to write
+  to yet, so it gets Discard only.
+- **Review screen** offers no third path. Confirm and Discard are already on screen and are the only two
+  states a pending upload can resolve to; a "save" here would half-apply one of them.
+
+## Route naming and re-upload cost
+
+Spans both repos. The name lives on `circuits/{roundKey}` as `round` + `round_source`, with the sheet's
+own heading kept alongside as `pdf_round`:
+
+| Field | Written by | Meaning |
+| --- | --- | --- |
+| `round` | confirm-run-sheet, or an owner rename from the route list | Display name |
+| `round_source` | same | `owner` once a person has chosen it; `file` while it follows the sheet |
+| `pdf_round` | confirm-run-sheet | The heading this circuit was built from — the *only* thing `round_mismatch` compares |
+
+Precedence when a sheet is processed (`_resolve_route_name`): what the owner typed on this upload → the
+name they gave it before → the PDF's heading. Identical in shape to the per-stop instructions rule one
+layer down, deliberately.
+
+Ordering strategy, reported to the client as `diff.order_strategy`:
+
+| Strategy | When | Routing call |
+| --- | --- | --- |
+| `optimized` | No previous run for this circuit | Yes — Routes API |
+| `reused` | Same set of addresses | No |
+| `merged` | Stops added or removed | No — `domain/run_order.py` cheapest insertion |
+
+Geocoding was already free for unchanged stops (`CachedGoogleGeocoder` reads the `addresses` collection
+first), and owner instruction overrides already survived every upload. The merge case was the one thing
+that didn't.
 
 ## Known gaps in the upload flow
 

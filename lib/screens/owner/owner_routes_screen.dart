@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/route_name.dart';
+import '../../services/route_renamer.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
@@ -15,10 +17,17 @@ import 'upload_run_sheet_screen.dart';
 /// never scans a list of dates to remember.
 ///
 /// This was the Owner's landing screen until owner-home.html replaced it
-/// with the quick-actions hub. It now sits one tap in, behind "Upload
-/// sheet", because choosing *which* route a PDF belongs to is the first
-/// step of an upload - a new route or an existing one - and this list is
-/// how that choice is made.
+/// with the quick-actions hub. It now sits one tap in, behind "Routes",
+/// because choosing *which* route a PDF belongs to is the first step of an
+/// upload - a new route or an existing one - and this list is how that
+/// choice is made.
+///
+/// The per-card action says **Update**, not "Upload sheet". Uploading is the
+/// mechanism; what the owner is doing is bringing an existing route up to
+/// date with this week's sheet, keeping its name, its stop order and its
+/// delivery instructions. "Upload" described the file and left the outcome
+/// to be guessed at, and guessing wrong here means guessing that the route
+/// is about to be replaced.
 class OwnerRoutesScreen extends StatelessWidget {
   const OwnerRoutesScreen({super.key, required this.authState});
 
@@ -29,7 +38,7 @@ class OwnerRoutesScreen extends StatelessWidget {
     AppLog.owner('OwnerRoutesScreen build', {'uid': authState.user?.uid});
     return Scaffold(
       backgroundColor: AppColors.surfaceMuted,
-      appBar: AppBar(title: const Text('Upload sheet')),
+      appBar: AppBar(title: const Text('Routes')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -127,7 +136,42 @@ class _CircuitCard extends StatefulWidget {
 }
 
 class _CircuitCardState extends State<_CircuitCard> {
-  bool _revealDelete = false;
+  /// Long-press reveals rename and delete together. They are the two things
+  /// you can do *to* a route rather than *with* it, and both are destructive
+  /// enough to a shared list that neither belongs on the card's resting face
+  /// next to the everyday Update action.
+  bool _revealActions = false;
+
+  // Takes no BuildContext: everything after the dialog's await uses
+  // State.context guarded by this State's own `mounted`, which is the check
+  // the analyzer can actually reason about across the gap.
+  Future<void> _rename(String round) async {
+    final controller = TextEditingController(text: round);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => _RenameDialog(controller: controller),
+    );
+    controller.dispose();
+    if (name == null) {
+      AppLog.owner('rename route canceled', {'roundKey': widget.roundKey});
+      if (mounted) setState(() => _revealActions = false);
+      return;
+    }
+
+    try {
+      // Shared with the update screen's "Save name", which reaches the same
+      // document by a different road - see RouteRenamer for why the field
+      // set is not duplicated at each call site.
+      await RouteRenamer.rename(roundKey: widget.roundKey, name: name);
+      if (mounted) setState(() => _revealActions = false);
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('route rename failed', error, stack, {'roundKey': widget.roundKey});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(RouteRenamer.errorMessage(error))),
+      );
+    }
+  }
 
   Future<void> _confirmDelete(BuildContext context, String round) async {
     final confirmed = await showDialog<bool>(
@@ -146,7 +190,7 @@ class _CircuitCardState extends State<_CircuitCard> {
     );
     if (confirmed != true) {
       AppLog.owner('delete route canceled', {'roundKey': widget.roundKey});
-      if (mounted) setState(() => _revealDelete = false);
+      if (mounted) setState(() => _revealActions = false);
       return;
     }
     AppLog.owner('deleting route', {'roundKey': widget.roundKey, 'round': round});
@@ -166,8 +210,8 @@ class _CircuitCardState extends State<_CircuitCard> {
 
     return InkWell(
       onTap: () {
-        if (_revealDelete) {
-          setState(() => _revealDelete = false);
+        if (_revealActions) {
+          setState(() => _revealActions = false);
           return;
         }
         AppLog.owner('open RouteMapScreen', {'roundKey': widget.roundKey});
@@ -175,7 +219,7 @@ class _CircuitCardState extends State<_CircuitCard> {
           MaterialPageRoute(builder: (_) => RouteMapScreen(authState: widget.authState, roundKey: widget.roundKey)),
         );
       },
-      onLongPress: () => setState(() => _revealDelete = true),
+      onLongPress: () => setState(() => _revealActions = true),
       borderRadius: BorderRadius.circular(20),
       child: SurfaceCard(
         padding: const EdgeInsets.all(16),
@@ -199,25 +243,92 @@ class _CircuitCardState extends State<_CircuitCard> {
                 ],
               ),
             ),
-            if (_revealDelete)
+            if (_revealActions) ...[
+              IconButton(
+                onPressed: () => _rename(round),
+                icon: const Icon(Icons.drive_file_rename_outline_rounded, color: AppColors.brand),
+                tooltip: 'Rename route',
+              ),
               IconButton(
                 onPressed: () => _confirmDelete(context, round),
                 icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                 tooltip: 'Delete route',
-              )
+              ),
+            ]
             else
-              TextButton(
+              TextButton.icon(
                 onPressed: () => startUpload(
                   context,
                   widget.authState,
                   roundKey: widget.roundKey,
                   roundLabel: round,
                 ),
-                child: const Text('Upload sheet'),
+                icon: const Icon(Icons.published_with_changes_rounded, size: 18),
+                label: const Text('Update'),
               ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Renaming a route from the list. Stateful only so the name can be
+/// validated as it's typed - the length cap here is the one firestore.rules
+/// enforces, and a name that breaks it comes back as a bare
+/// permission-denied, which reads as a sign-in problem rather than as
+/// "that's too long".
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  String? _error;
+
+  void _submit() {
+    final error = RouteName.validationError(widget.controller.text);
+    final name = RouteName.toSubmit(widget.controller.text);
+    if (error != null || name == null) {
+      // A blank name is rejected rather than silently reverting to the run
+      // sheet's heading: the owner opened this dialog to choose a name, and
+      // quietly picking a different one for them is not an answer.
+      setState(() => _error = error ?? 'Give the route a name.');
+      return;
+    }
+    Navigator.pop(context, name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename route'),
+      content: TextField(
+        controller: widget.controller,
+        autofocus: true,
+        maxLength: RouteName.maxLength,
+        textCapitalization: TextCapitalization.sentences,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
+        decoration: InputDecoration(
+          labelText: 'Route name',
+          hintText: 'e.g. Mosgiel morning',
+          border: const OutlineInputBorder(),
+          errorText: _error,
+          counterText: '',
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(onPressed: _submit, child: const Text('Save')),
+      ],
     );
   }
 }
