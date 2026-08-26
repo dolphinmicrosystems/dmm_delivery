@@ -86,4 +86,73 @@ void main() {
       expect(e.etaLabel, '—');
     });
   });
+
+  // --- the board as a whole -------------------------------------------------
+  //
+  // Added when the board stopped being a walk of the run_sheets bucket and
+  // became this owner's own roster, read from Firestore. `unassigned_runs` is
+  // new in that response: a route nobody is driving used to be invisible,
+  // because the board only ever drew driver cards.
+
+  group('RiderBoard', () {
+    RiderBoard board(Map<String, dynamic> json) => RiderBoard.fromJson(json);
+
+    test('an empty response is an empty board, not a crash', () {
+      expect(board({}).riders, isEmpty);
+      expect(board({}).unassignedRuns, isEmpty);
+      expect(board({}).unassignedNotice, isNull);
+    });
+
+    test('counts drivers who are actually on route', () {
+      final result = board({
+        'riders': [
+          {'rider_key': 'a', 'driver_name': 'Ana', 'presence': 'on_route'},
+          {'rider_key': 'b', 'driver_name': 'Ben', 'presence': 'offline'},
+        ],
+      });
+
+      expect(result.liveCount, 1);
+    });
+
+    test('says nothing when every route has a driver', () {
+      expect(board({'unassigned_runs': []}).unassignedNotice, isNull);
+    });
+
+    test('names one unassigned route in the singular', () {
+      final result = board({
+        'unassigned_runs': [
+          {'run_id': 'r1', 'round': 'Run 2', 'stop_count': 12},
+        ],
+      });
+
+      expect(result.unassignedNotice, '1 route has no driver · 12 stops');
+    });
+
+    test('adds the stops up across several', () {
+      final result = board({
+        'unassigned_runs': [
+          {'run_id': 'r1', 'round': 'Run 2', 'stop_count': 12},
+          {'run_id': 'r2', 'round': 'Run 3', 'stop_count': 8},
+        ],
+      });
+
+      expect(result.unassignedNotice, '2 routes have no driver · 20 stops');
+    });
+
+    test('omits a stop count nobody supplied rather than saying 0 stops', () {
+      final result = board({
+        'unassigned_runs': [
+          {'run_id': 'r1'},
+        ],
+      });
+
+      expect(result.unassignedNotice, '1 route has no driver');
+    });
+
+    test('an unnamed route still reads as something', () {
+      final run = UnassignedRun.fromJson({'run_id': 'r1'});
+
+      expect(run.label, 'Untitled route');
+    });
+  });
 }

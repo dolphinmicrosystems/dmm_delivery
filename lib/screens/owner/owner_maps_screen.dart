@@ -20,11 +20,15 @@ import 'owner_rider_screen.dart';
 /// geography already has a dedicated full-screen map in RouteMapScreen.
 ///
 /// Fed by the rider-board Cloud Function rather than a Firestore stream, so
-/// it's a pull-to-refresh screen, not a live one. That's a deliberate
-/// consequence of where the data lives: the board is derived from the run
-/// sheet PDFs in the bucket, which nothing pushes changes from. When the
-/// backend writes rider_board/{riderKey} to Firestore, this becomes a
-/// snapshot listener and the refresh gesture stops mattering.
+/// it's a pull-to-refresh screen, not a live one. The endpoint reads this
+/// owner's drivers and runs from Firestore, scoped to the `owner_uid` claim
+/// on the caller's token - it used to walk the whole run_sheets bucket, which
+/// meant every owner's board showed every other owner's customers.
+///
+/// One card per driver on this owner's roster. A driver with no run assigned
+/// reads as offline with nothing claimed about them, which is the truth for
+/// every driver today: nothing sets `delivery_run.rider_id` yet. Routes with
+/// no driver are called out above the list rather than being invisible.
 class OwnerMapsScreen extends StatefulWidget {
   const OwnerMapsScreen({super.key, required this.authState});
 
@@ -36,7 +40,7 @@ class OwnerMapsScreen extends StatefulWidget {
 
 class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
   final RiderBoardApi _api = RiderBoardApi();
-  late Future<List<RiderBoardEntry>> _board;
+  late Future<RiderBoard> _board;
 
   @override
   void initState() {
@@ -44,17 +48,11 @@ class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
     _board = _load();
   }
 
-  Future<List<RiderBoardEntry>> _load() {
+  Future<RiderBoard> _load() {
     AppLog.owner('OwnerMapsScreen loading board', {'uid': widget.authState.user?.uid});
-    return _api.fetchBoard().then((riders) {
-      // On-route drivers first: the owner opens this screen to see who is
-      // moving, not to read an alphabetical staff list.
-      riders.sort((a, b) {
-        if (a.presence != b.presence) return a.presence == RiderPresence.onRoute ? -1 : 1;
-        return a.driverName.compareTo(b.driverName);
-      });
-      return riders;
-    });
+    // No client-side sort any more: the server already returns busiest first,
+    // and two orderings of the same list is how they come to disagree.
+    return _api.fetchBoard();
   }
 
   Future<void> _refresh() async {
@@ -62,14 +60,14 @@ class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
     setState(() => _board = future);
     // Awaited so RefreshIndicator keeps spinning until the request settles;
     // swallowed because the FutureBuilder below is what renders the failure.
-    await future.catchError((_) => <RiderBoardEntry>[]);
+    await future.catchError((_) => const RiderBoard(riders: []));
   }
 
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _refresh,
-      child: FutureBuilder<List<RiderBoardEntry>>(
+      child: FutureBuilder<RiderBoard>(
         future: _board,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -87,16 +85,24 @@ class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
             );
           }
 
-          final riders = snapshot.data ?? const <RiderBoardEntry>[];
-          final liveCount = riders.where((r) => r.presence == RiderPresence.onRoute).length;
-          AppLog.owner('rider board rendered', {'total': riders.length, 'live': liveCount});
+          final board = snapshot.data ?? const RiderBoard(riders: []);
+          final riders = board.riders;
+          AppLog.owner('rider board rendered', {
+            'total': riders.length,
+            'live': board.liveCount,
+            'unassigned': board.unassignedRuns.length,
+          });
 
           if (riders.isEmpty) {
             return const _Scrollable(
               child: _BoardMessage(
                 icon: Icons.groups_outlined,
                 title: 'No drivers yet',
-                body: 'Upload a run sheet, then pull down to refresh.',
+                // Names the actual next step. The board is a roster now, not
+                // a view of the bucket - uploading a sheet adds no drivers.
+                body:
+                    'Register a driver in Settings, and they appear here '
+                    'once they accept and sign in.',
               ),
             );
           }
@@ -107,11 +113,42 @@ class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                 child: Text(
-                  '$liveCount of ${riders.length} live',
-                  style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
+                  '${board.liveCount} of ${riders.length} live',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.inkMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-              const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 8), child: SectionLabel('Delivery guys')),
+              if (board.unassignedNotice != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0x1AE4A83A),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline_rounded, size: 18, color: AppColors.warning),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            board.unassignedNotice!,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              color: AppColors.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 8), child: SectionLabel('Drivers')),
               Expanded(
                 child: ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -161,9 +198,7 @@ class _RiderCard extends StatelessWidget {
     return InkWell(
       onTap: () {
         AppLog.owner('open OwnerRiderScreen', {'riderKey': entry.riderKey});
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => OwnerRiderScreen(entry: entry)),
-        );
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => OwnerRiderScreen(entry: entry)));
       },
       borderRadius: BorderRadius.circular(20),
       child: _cardBody(isLive),
@@ -237,7 +272,12 @@ class _RiderCard extends StatelessWidget {
               const SizedBox(height: 2),
               const Text(
                 'ETA',
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: AppColors.inkMuted),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.8,
+                  color: AppColors.inkMuted,
+                ),
               ),
             ],
           ),

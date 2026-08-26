@@ -57,6 +57,27 @@ class AuthGate extends StatelessWidget {
                 ),
               ),
             );
+          case AuthStatus.staleSession:
+            AppLog.auth('AuthGate -> staleSession (role but no owner_uid claim)');
+            return Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Your sign-in is out of date.\n\nSign out and sign in again to '
+                        'carry on - nothing has been lost.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(onPressed: authState.signOut, child: const Text('Sign out')),
+                    ],
+                  ),
+                ),
+              ),
+            );
           case AuthStatus.signedIn:
             AppLog.auth('AuthGate -> RootShell (signed in)', {'role': authState.role?.name});
             return RootShell(authState: authState);

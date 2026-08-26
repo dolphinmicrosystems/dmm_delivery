@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../services/depot_locator.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import 'pill_badge.dart';
@@ -45,11 +46,18 @@ class _StopInstructionsSheetState extends State<StopInstructionsSheet> {
     final addressKey = _addressKey;
     if (addressKey == null) return;
     setState(() => _saving = true);
-    await FirebaseFirestore.instance.collection('stop_instructions').doc(addressKey).set({
-      'owner_instructions': _controller.text.trim().isEmpty ? null : _controller.text.trim(),
-      'owner_instructions_updated_at': FieldValue.serverTimestamp(),
-      'owner_instructions_updated_by': widget.authState.user!.uid,
-    }, SetOptions(merge: true));
+    final ownerUid = widget.authState.ownerUid;
+    if (ownerUid == null) return;
+    await FirebaseFirestore.instance
+        .collection('stop_instructions')
+        // Scoped, not the bare address hash - see DepotLocator.stopInstructionsId.
+        .doc(DepotLocator.stopInstructionsId(ownerUid, addressKey))
+        .set({
+          'owner_uid': ownerUid,
+          'owner_instructions': _controller.text.trim().isEmpty ? null : _controller.text.trim(),
+          'owner_instructions_updated_at': FieldValue.serverTimestamp(),
+          'owner_instructions_updated_by': widget.authState.user!.uid,
+        }, SetOptions(merge: true));
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -67,9 +75,15 @@ class _StopInstructionsSheetState extends State<StopInstructionsSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(_stop['customer_name'] as String? ?? '', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          Text(
+            _stop['customer_name'] as String? ?? '',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 2),
-          Text(_stop['address'] as String? ?? '', style: const TextStyle(fontSize: 13, color: AppColors.inkMuted)),
+          Text(
+            _stop['address'] as String? ?? '',
+            style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
+          ),
           const SizedBox(height: 12),
           PillBadge(
             label: switch (source) {

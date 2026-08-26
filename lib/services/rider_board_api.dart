@@ -86,27 +86,21 @@ class RiderBoardApi {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<List<RiderBoardEntry>> fetchBoard() async {
+  /// This owner's drivers and their assigned runs.
+  ///
+  /// The endpoint reads Firestore scoped to the caller's `owner_uid` claim.
+  /// It used to walk the whole run_sheets bucket and re-parse every PDF,
+  /// which is why the timeout above is 60 seconds - that can come down once
+  /// this has run in anger for a while.
+  Future<RiderBoard> fetchBoard() async {
     final body = await _get('');
+    final board = RiderBoard.fromJson(body);
 
-    // Surfaced rather than swallowed: a run sheet that failed to parse means
-    // stops missing from the board, and silently showing a short list is
-    // worse than showing a short list that says so.
-    final parseErrors = (body['parse_errors'] as List?) ?? const [];
-    if (parseErrors.isNotEmpty) {
-      AppLog.owner.error('rider board reported parse errors', parseErrors, null);
-    }
-
-    final riders = (body['riders'] as List?) ?? const [];
     AppLog.owner('rider board loaded', {
-      'riders': riders.length,
-      'objects': body['object_count'],
-      'parseErrors': parseErrors.length,
+      'riders': board.riders.length,
+      'unassignedRuns': board.unassignedRuns.length,
     });
 
-    return [
-      for (final rider in riders.cast<Map<String, dynamic>>())
-        RiderBoardEntry.fromApiRider(rider),
-    ];
+    return board;
   }
 }

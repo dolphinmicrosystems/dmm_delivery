@@ -78,10 +78,15 @@ class SignInScreen extends StatefulWidget {
 }
 
 class _SignInScreenState extends State<SignInScreen> {
+  /// The message currently on screen in the dialog, so a rebuild does not
+  /// stack a second copy of it. Cleared when the status leaves `error`, which
+  /// is what lets a *new* failed attempt raise the dialog again.
+  String? _shownError;
+
   @override
   void initState() {
     super.initState();
-    widget.authState.addListener(_popWhenSignedIn);
+    widget.authState.addListener(_onAuthChanged);
     // A session can already be live before this frame - a restored session, or
     // a race where sign-in completed between the push and this initState - and
     // no further notification would ever arrive to trigger the listener.
@@ -90,8 +95,44 @@ class _SignInScreenState extends State<SignInScreen> {
 
   @override
   void dispose() {
-    widget.authState.removeListener(_popWhenSignedIn);
+    widget.authState.removeListener(_onAuthChanged);
     super.dispose();
+  }
+
+  /// The registered listener. `_popWhenSignedIn` is left exactly as it was -
+  /// see the regression guard at the top of this file - and the error dialog
+  /// is a second, independent reaction to the same notification.
+  void _onAuthChanged() {
+    _popWhenSignedIn();
+    _showErrorDialog();
+  }
+
+  void _showErrorDialog() {
+    if (!mounted) return;
+
+    if (widget.authState.status != AuthStatus.error) {
+      // Leaving the error state re-arms the dialog for the next attempt.
+      _shownError = null;
+      return;
+    }
+
+    final message = widget.authState.errorMessage ?? 'Something went wrong.';
+    if (message == _shownError) return;
+
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return;
+
+    _shownError = message;
+    // Deferred to after the frame: notifyListeners can land mid-build, and
+    // showDialog during build throws.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      AppLog.auth('SignInScreen showing error dialog');
+      showDialog<void>(
+        context: context,
+        builder: (dialogContext) => _SignInErrorDialog(message: message),
+      );
+    });
   }
 
   void _popWhenSignedIn() {
@@ -145,21 +186,10 @@ class _SignInScreenState extends State<SignInScreen> {
                   style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
                 ),
                 const SizedBox(height: 32),
-                if (authState.status == AuthStatus.error) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFCEAEA),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      authState.errorMessage ?? 'Something went wrong.',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 13, color: Color(0xFFB42318)),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                // No inline error panel: a refusal is a conversation, not a
+                // footnote under a button, and a box that appears above the
+                // button shifts the thing someone is reaching for. It is a
+                // dialog now - see _showErrorDialog.
                 isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : PrimaryButton(
@@ -174,6 +204,68 @@ class _SignInScreenState extends State<SignInScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+/// The refusal, as a dialog rather than a panel wedged above the button.
+///
+/// Sized and worded for the commonest case by far: someone signed in with the
+/// wrong Google account, or with one nobody has invited. That is not an error
+/// in the crash sense - the system worked - so it is styled as an answer, not
+/// as a failure. The icon is a closed envelope rather than a red warning
+/// triangle for the same reason.
+class _SignInErrorDialog extends StatelessWidget {
+  const _SignInErrorDialog({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: const BoxDecoration(color: Color(0xFFFCEAEA), shape: BoxShape.circle),
+              alignment: Alignment.center,
+              child: const Icon(Icons.mark_email_unread_outlined, size: 26, color: Color(0xFFB42318)),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Can\'t sign you in',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 13.5, color: AppColors.inkMuted, height: 1.45),
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                // Not "OK": the dialog is telling someone what to do next, and
+                // this is them acknowledging it rather than dismissing a fault.
+                child: const Text('Got it'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

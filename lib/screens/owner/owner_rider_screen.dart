@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../models/rider_board_entry.dart';
 import '../../models/rider_map_data.dart';
@@ -55,7 +56,8 @@ class _OwnerRiderScreenState extends State<OwnerRiderScreen> {
             'riderKey': data.riderKey,
             'points': data.route.length,
             'stops': data.stops.length,
-            'isMock': data.isMock,
+            'sequenceOnly': data.isSequenceOnly,
+            'hasPosition': data.position != null,
           });
 
           return Stack(
@@ -73,14 +75,31 @@ class _OwnerRiderScreenState extends State<OwnerRiderScreen> {
                   tooltip: 'Back',
                 ),
               ),
-              if (data.isMock)
+              // The stops and their order are real; the line between them is
+              // not a driven path, and nothing is watching the driver. Said
+              // plainly, because a line on a map reads as a route and a
+              // marker reads as a person.
+              if (data.isSequenceOnly)
                 Positioned(
                   right: 16,
                   top: MediaQuery.of(context).padding.top + 12,
                   child: const PillBadge(
-                    label: 'Mock route & position',
+                    label: 'Stop order · not live',
                     background: Colors.white,
                     foreground: AppColors.inkMuted,
+                  ),
+                ),
+              if (data.missingStopsNotice != null)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  top: MediaQuery.of(context).padding.top + 60,
+                  child: Center(
+                    child: PillBadge(
+                      label: data.missingStopsNotice!,
+                      background: const Color(0xFFFDF3E2),
+                      foreground: AppColors.warning,
+                    ),
                   ),
                 ),
               Align(
@@ -107,7 +126,9 @@ class _RiderMap extends StatelessWidget {
         // Framed to the route rather than a fixed centre/zoom, so the whole
         // run is visible on any screen size without hand-tuning a zoom level.
         initialCameraFit: CameraFit.coordinates(
-          coordinates: data.route.isEmpty ? [data.position] : data.route,
+          // Dunedin, when there is nothing to frame: a driver with no run
+          // assigned still opens a map rather than a crash.
+          coordinates: data.route.isEmpty ? const [LatLng(-45.8788, 170.5028)] : data.route,
           padding: const EdgeInsets.fromLTRB(48, 96, 48, 260),
         ),
         interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
@@ -137,20 +158,29 @@ class _RiderMap extends StatelessWidget {
                 height: 12,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    // A delivered stop is filled in, so the owner can read
+                    // progress off the map without opening the list.
+                    color: stop.isDelivered ? AppColors.success : Colors.white,
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.brand, width: 2.5),
+                    border: Border.all(
+                      color: stop.isDelivered ? AppColors.success : AppColors.brand,
+                      width: 2.5,
+                    ),
                   ),
                 ),
               ),
-            Marker(
-              point: data.position,
-              // Sized for the halo at its widest, or the ping gets clipped to
-              // the marker box and pulses into a square.
-              width: 72,
-              height: 72,
-              child: _PulsingRider(bearing: data.bearing),
-            ),
+            // Only when something has actually reported a position. There is
+            // no such thing yet, so this draws nothing rather than pulsing
+            // somewhere plausible.
+            if (data.position != null)
+              Marker(
+                point: data.position!,
+                // Sized for the halo at its widest, or the ping gets clipped
+                // to the marker box and pulses into a square.
+                width: 72,
+                height: 72,
+                child: const _PulsingRider(bearing: 0),
+              ),
           ],
         ),
       ],
@@ -257,22 +287,19 @@ class _RiderSheet extends StatelessWidget {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.4),
                 ),
               ),
-              StatusDot(
-                label: entry.presence.label,
-                color: isLive ? AppColors.success : AppColors.inkMuted,
-              ),
+              StatusDot(label: entry.presence.label, color: isLive ? AppColors.success : AppColors.inkMuted),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            entry.subtitle,
-            style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, height: 1.35),
-          ),
+          Text(entry.subtitle, style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, height: 1.35)),
           const SizedBox(height: 16),
           Row(
             children: [
               _Stat(label: 'ETA', value: entry.etaLabel),
-              _Stat(label: 'Queue', value: entry.dropsLeft == 0 ? 'Awaiting run' : '${entry.dropsLeft} drops'),
+              _Stat(
+                label: 'Queue',
+                value: entry.dropsLeft == 0 ? 'Awaiting run' : '${entry.dropsLeft} drops',
+              ),
               _Stat(label: 'Stops', value: '${data.stops.length}'),
             ],
           ),
@@ -368,7 +395,10 @@ class _ErrorState extends StatelessWidget {
           children: [
             const Icon(Icons.map_outlined, size: 36, color: AppColors.inkMuted),
             const SizedBox(height: 12),
-            const Text("Couldn't load this driver", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            const Text(
+              "Couldn't load this driver",
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 6),
             Text(
               message,

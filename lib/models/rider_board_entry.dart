@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'driver_invitation.dart';
+
 /// Whether a driver is currently running a route. The prototype
 /// (owner-maps.html) showed three states - "On route", "Picking up" and
 /// "Idle" - but only the first is a real, observable state: the others were
@@ -114,24 +116,79 @@ class RiderBoardEntry {
   /// which is every driver today. They belong on the board (the owner
   /// invited them, so they expect to see them) with nothing claimed about
   /// where they are.
+  ///
+  /// `accepted_uid` is written by `before_sign_in_fn.py` at acceptance and is
+  /// the identity the real board will key on; the document id (the invited
+  /// email) stands in until then, so a card keeps a stable key either way.
   factory RiderBoardEntry.fromInvitation(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data();
     final email = data['driver_email'] as String? ?? doc.id;
+    final name = (data['driver_name'] as String?)?.trim();
     return RiderBoardEntry(
       riderKey: data['accepted_uid'] as String? ?? doc.id,
-      driverName: data['driver_name'] as String? ?? _nameFromEmail(email),
+      // Falls through to the shared guess rather than a local copy of it:
+      // a driver spelled one way in Settings and another on the board reads
+      // as two drivers.
+      driverName: name != null && name.isNotEmpty ? name : DriverInvitation.nameFromEmail(email),
       presence: RiderPresence.offline,
     );
   }
+}
 
-  /// "aimee.grant@wae.co.nz" -> "Aimee Grant". A placeholder until the
-  /// backend records a real display name at sign-in: showing a raw email
-  /// address where the design shows a person's name makes the whole list
-  /// read as debug output.
-  static String _nameFromEmail(String email) {
-    final local = email.split('@').first;
-    final words = local.split(RegExp(r'[._-]+')).where((w) => w.isNotEmpty);
-    if (words.isEmpty) return email;
-    return words.map((w) => w[0].toUpperCase() + w.substring(1)).join(' ');
+/// A route with nobody driving it.
+///
+/// Surfaced rather than dropped: a run with no assigned driver is the thing
+/// an owner most needs to notice before the morning starts, and it is
+/// invisible on a board that only draws driver cards.
+class UnassignedRun {
+  const UnassignedRun({required this.runId, this.round, this.stopCount = 0});
+
+  final String runId;
+  final String? round;
+  final int stopCount;
+
+  String get label => round ?? 'Untitled route';
+
+  factory UnassignedRun.fromJson(Map<String, dynamic> json) {
+    return UnassignedRun(
+      runId: json['run_id'] as String? ?? '',
+      round: json['round'] as String?,
+      stopCount: (json['stop_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// The whole board: this owner's drivers, plus the work nobody is carrying.
+class RiderBoard {
+  const RiderBoard({required this.riders, this.unassignedRuns = const []});
+
+  final List<RiderBoardEntry> riders;
+  final List<UnassignedRun> unassignedRuns;
+
+  int get liveCount => riders.where((r) => r.presence == RiderPresence.onRoute).length;
+
+  /// The sentence for the banner above the list, or null when there is
+  /// nothing to say. Kept here so the wording is testable without pumping a
+  /// screen that needs Firebase to build.
+  String? get unassignedNotice {
+    if (unassignedRuns.isEmpty) return null;
+    final stops = unassignedRuns.fold<int>(0, (total, run) => total + run.stopCount);
+    final routes = unassignedRuns.length == 1
+        ? '1 route has no driver'
+        : '${unassignedRuns.length} routes have no driver';
+    return stops == 0 ? routes : '$routes · $stops stops';
+  }
+
+  factory RiderBoard.fromJson(Map<String, dynamic> json) {
+    return RiderBoard(
+      riders: [
+        for (final rider in ((json['riders'] as List?) ?? const []).cast<Map<String, dynamic>>())
+          RiderBoardEntry.fromApiRider(rider),
+      ],
+      unassignedRuns: [
+        for (final run in ((json['unassigned_runs'] as List?) ?? const []).cast<Map<String, dynamic>>())
+          UnassignedRun.fromJson(run),
+      ],
+    );
   }
 }

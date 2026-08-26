@@ -1,0 +1,141 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../models/driver_invitation.dart';
+import '../util/app_log.dart';
+
+/// Every write the Owner app makes to `driver_invitations`, in one place.
+///
+/// Same reason `RouteRenamer` exists: `firestore.rules` accepts these writes
+/// only in exact shapes, and a caller that adds a field or drops a source
+/// gets back a bare `permission-denied`. Four screens' worth of call sites
+/// each assembling their own map is how those shapes drift apart.
+///
+/// The shapes the rules allow, and why:
+///
+///  * **invite / resend** - the whole document, `accepted_at` null and
+///    `expires_at` inside the 90-day ceiling. These are the same write:
+///    resending *is* renewing, because there is no link to re-send and the
+///    document is the credential.
+///  * **rename** - `driver_name` + `driver_name_source` and nothing else.
+///    Separate precisely so it can apply to a driver who has already
+///    accepted; routed through the invite shape it would blank their
+///    `accepted_at` and drop them out of the roster.
+class DriverInviter {
+  const DriverInviter._();
+
+  static CollectionReference<Map<String, dynamic>> get _collection =>
+      FirebaseFirestore.instance.collection('driver_invitations');
+
+  /// Creates or renews an invitation. The document id is the lowercased
+  /// address, so re-inviting the same person renews rather than accumulating
+  /// a second row.
+  ///
+  /// [name] is what the owner typed, and may be null - they don't always know
+  /// it, and Google's display name fills the gap on acceptance. When they did
+  /// type one it is written with source `owner`, which is what stops signing
+  /// in from overwriting it (see `handle_sign_in.resolve_driver_name`).
+  static Future<void> invite({
+    required String email,
+    required String ownerUid,
+    required int ttlDays,
+    String? name,
+    InvitationRole role = InvitationRole.rider,
+  }) async {
+    final normalized = InviteForm.normalizeEmail(email);
+    AppLog.owner('inviting', {'ttlDays': ttlDays, 'named': name != null, 'role': role.wire});
+
+    await _collection.doc(normalized).set({
+      'driver_email': normalized,
+      // Doubles as the tenant key: this is the business the driver joins, and
+      // handle_sign_in reads this exact field to mint their owner_uid claim.
+      'invited_by': ownerUid,
+      'invited_at': FieldValue.serverTimestamp(),
+      // Client-computed rather than a server timestamp: the rules compare it
+      // against request.time, and a sentinel has no value to compare. A day
+      // of headroom absorbs any plausible clock skew.
+      'expires_at': Timestamp.fromDate(DateTime.now().add(Duration(days: ttlDays))),
+      'accepted_at': null,
+      // Always written, even for a driver. An absent role reads as rider
+      // everywhere, so omitting it would work - but a roster where some rows
+      // state their role and others imply it is a roster nobody trusts.
+      'role': role.wire,
+      'driver_name': ?name,
+      if (name != null) 'driver_name_source': 'owner',
+    });
+
+    AppLog.owner('invite written', {'ttlDays': ttlDays, 'role': role.wire});
+  }
+
+  /// Renews an invitation that is pending or expired, keeping whatever the
+  /// driver is already called.
+  ///
+  /// The name is carried across explicitly because this is a whole-document
+  /// write, not a merge - a resend that dropped it would silently un-name
+  /// someone the owner had labelled. Only an owner-sourced name is carried:
+  /// a name Google supplied belongs to an acceptance that, by definition,
+  /// hasn't happened on a row being resent.
+  static Future<void> resend({
+    required DriverInvitation invitation,
+    required String ownerUid,
+    required int ttlDays,
+  }) {
+    AppLog.owner('resending invite', {
+      'status': invitation.status.name,
+      'ttlDays': ttlDays,
+      'role': invitation.role.wire,
+    });
+    return invite(
+      email: invitation.email,
+      ownerUid: ownerUid,
+      ttlDays: ttlDays,
+      name: invitation.isOwnerNamed ? invitation.driverName : null,
+      // Carried across explicitly: this is a whole-document write, and a
+      // resend that silently downgraded an owner invitation to a driver one
+      // would be found out only when they signed in to the wrong app.
+      role: invitation.role,
+    );
+  }
+
+  /// Renames a driver. Works in every state, accepted included.
+  ///
+  /// Exactly two fields, like `RouteRenamer.rename` - the rules match on
+  /// `affectedKeys().hasOnly([...])`, so an added timestamp is rejected
+  /// outright rather than ignored.
+  static Future<void> rename({required String email, required String name}) async {
+    AppLog.owner('renaming driver', {'chars': name.length});
+    await _collection.doc(InviteForm.normalizeEmail(email)).update({
+      'driver_name': name,
+      'driver_name_source': 'owner',
+    });
+    AppLog.owner('driver renamed', {});
+  }
+
+  /// Removes a driver from the roster.
+  ///
+  /// Worth being clear about what this does not do. It withdraws the
+  /// invitation, so an unaccepted driver can no longer sign in and become a
+  /// rider. It does **not** revoke a role claim already minted: a driver who
+  /// has accepted keeps `role: rider` on their next token refresh, because
+  /// `resolve_role_for_sign_in` returns early for an account that already
+  /// has a role and never re-reads this collection. Revoking an active
+  /// driver needs a claim change server-side, which nothing implements yet.
+  static Future<void> remove(String email) async {
+    AppLog.owner('removing driver invitation', {});
+    await _collection.doc(InviteForm.normalizeEmail(email)).delete();
+    AppLog.owner('driver invitation removed', {});
+  }
+
+  /// The sentence to show when one of these writes is refused.
+  ///
+  /// `permission-denied` is the one worth translating: it is what the rules
+  /// return for an over-long name, an out-of-range expiry, and a resend
+  /// aimed at a driver who has already accepted - none of which read as a
+  /// permission problem to the person who triggered them.
+  static String errorMessage(FirebaseException error) {
+    if (error.code != 'permission-denied') {
+      return 'Couldn\'t save that: ${error.message ?? error.code}';
+    }
+    return 'That change was rejected. Check the name length and that this '
+        'driver hasn\'t already accepted, then try again.';
+  }
+}

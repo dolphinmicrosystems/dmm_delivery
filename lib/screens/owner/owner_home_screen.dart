@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/driver_invitation.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
@@ -30,7 +31,12 @@ class OwnerHomeScreen extends StatelessWidget {
       children: [
         Text(
           displayName == null ? 'Kia ora' : 'Kia ora, $displayName',
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, height: 1.15, letterSpacing: -0.5),
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            height: 1.15,
+            letterSpacing: -0.5,
+          ),
         ),
         const SizedBox(height: 4),
         const Text("Run today's deliveries.", style: TextStyle(fontSize: 14, color: AppColors.inkMuted)),
@@ -62,9 +68,9 @@ class OwnerHomeScreen extends StatelessWidget {
           icon: Icons.published_with_changes_rounded,
           onPressed: () {
             AppLog.owner('open OwnerRoutesScreen');
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => OwnerRoutesScreen(authState: authState)),
-            );
+            Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => OwnerRoutesScreen(authState: authState)));
           },
         ),
       ],
@@ -82,21 +88,22 @@ class _InviteQuickAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: authState.pendingInvites(),
+      stream: authState.invitations(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          AppLog.owner.error('pending invites stream failed', snapshot.error, snapshot.stackTrace);
+          AppLog.owner.error('invitations stream failed', snapshot.error, snapshot.stackTrace);
         }
-        final count = snapshot.data?.docs.length;
+        final docs = snapshot.data?.docs;
+        // Counted here rather than queried, because "expired" is a
+        // comparison against the clock and Firestore cannot express it as a
+        // query that stays true as time passes.
+        final now = DateTime.now();
         return _QuickAction(
           badge: 'Invites',
           title: 'Invite riders',
-          subtitle: switch (count) {
-            null => 'Checking invitations…',
-            0 => 'No invites pending acceptance',
-            1 => '1 invite pending acceptance',
-            _ => '$count invites pending acceptance',
-          },
+          subtitle: docs == null
+              ? 'Checking invitations…'
+              : DriverInvitation.rosterSummary(docs.map((doc) => DriverInvitation.fromDoc(doc, now: now))),
           icon: Icons.person_add_alt_1_rounded,
           onPressed: () => showInviteDriverDialog(context, authState),
         );
@@ -225,7 +232,11 @@ class _QuickAction extends StatelessWidget {
                       Text(
                         title,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.2,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -247,7 +258,8 @@ class _QuickAction extends StatelessWidget {
                               color: enabled ? AppColors.brand : AppColors.inkMuted,
                             ),
                           ),
-                          if (enabled) const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.brand),
+                          if (enabled)
+                            const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.brand),
                         ],
                       ),
                     ],

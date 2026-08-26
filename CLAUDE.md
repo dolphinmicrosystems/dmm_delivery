@@ -15,7 +15,7 @@ The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + 
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
 name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
 `build_rider_board.py`) — those names are the contract. Its tests run with
-`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (106 tests). Several features span both repos —
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (121 tests). Several features span both repos —
 route naming and the stop-order merge below are the current examples — and a client change that writes a
 new Firestore field is inert until that repo's `firestore.rules` is deployed.
 
@@ -29,7 +29,7 @@ yet") are deliberate and explained there.
 - Install deps: `flutter pub get`
 - Run app: `flutter run`
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (51 tests, all passing)
+- Run all tests: `flutter test` (134 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: `dart format .`
@@ -47,7 +47,7 @@ needs the script.
 
 ## Tests
 
-`test/` is three files of pure model + widget tests with **no Firebase, network or Firestore fakes** —
+`test/` is six files of pure model + widget tests with **no Firebase, network or Firestore fakes** —
 models are constructed directly (`RunStop(...)`, `StopItem(...)`), and widget tests pump `StopCard` /
 `RoutePreviewMap` / the reorderable list and drive real gestures. Nothing exercises `RunStop.fromDoc`,
 `RiderBoardApi` or any `StreamBuilder`, so **logic worth testing has to live in a model or widget the test
@@ -101,13 +101,16 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
                          long-press a card to rename (round/round_source) or delete
 OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
 OwnerRiderScreen       → RiderBoardApi.fetchRiderMap → encoded polyline + position
-OwnerSettingsScreen    → driver_invitations (invite / accepted roster)
+OwnerSettingsScreen    → driver_invitations (invite / rename / resend / remove, all three states)
+                         + app_settings/invitations (how long a new invite stays valid)
+                         + user_profiles/{uid} (the account card) → OwnerProfileScreen
+OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
 ```
 
 Collections touched from the client: `circuits` (read, delete, and a rename limited to
 `round`/`round_source`), `delivery_run/{id}/delivery_stop`, `run_sheet_upload`, `driver_invitations`,
 `addresses` (read-only geocode cache), `stop_instructions` (owner override field only — Firestore rules
-allow that one field directly, no function needed).
+allow that one field directly, no function needed), `app_settings/invitations` (invitation TTL), `user_profiles/{uid}` (own profile; owners may read any).
 
 **The rider-board endpoint is IAM-open by necessity.** Cloud Run IAM cannot evaluate a Firebase token, so
 `allUsers` opens the gate and the function's own `_require_owner()` is the actual authorization.
@@ -162,6 +165,61 @@ its own when the backend goes real. See plan.md's table before assuming a number
 - `milkTotals()` must stay independent of stop order — reordering a route cannot change what's loaded on
   the van, and a test pins that.
 - Product lines render through `StopItem.label` everywhere; a quantity formatted two ways is a support call.
+- **A driver invitation has no link and no token.** The `driver_invitations/{email}` document *is* the
+  credential — `before_sign_in_fn.py` authorises the invited address on its next Google sign-in whether
+  or not the email arrived, so an owner can invite someone and tell them out of band. Expiry is therefore
+  `expires_at` on that document and nothing else, and "resend" means "renew", i.e. rewrite the document
+  with a later deadline. Don't add a link; there is nothing for it to carry.
+- **Owners and drivers are invited through the same flow**, distinguished by `driver_invitations.role`
+  (`owner`/`rider`). Absent means `rider` — every invitation written before this lacks the field. Read it
+  through `InvitationRole.parse`, which resolves anything unrecognised **down** to `rider`, mirroring
+  `Invitation.granted_role()` in the backend; a typo must cost access, never grant it. `role.wire` is the
+  backend's spelling (`rider`) and `role.label` is the app's (`Driver`), the same split as `AuthRole.driver`.
+  An owner invite gets a confirm step and a badge on every roster row, because it is a much larger grant
+  than a driver invite and a dropdown does not say so.
+- **`DriverInviter` owns every `driver_invitations` write**, for the same reason `RouteRenamer` owns the
+  `circuits` rename: the rules accept exact shapes. An invite is the whole document with `accepted_at`
+  null; a rename is **exactly** `driver_name` + `driver_name_source` and is a separate write precisely so
+  it can apply to a driver who has already accepted. Routing a rename through the invite shape blanks
+  their `accepted_at` and drops them off the roster.
+- **A resend aimed at an accepted driver would un-accept them.** `isInvite()` only constrains the
+  *incoming* document, so the rules also check `resource.data.accepted_at == null` on the update path, and
+  `DriverInvitation.canResend` disables the menu item. Both halves matter — the driver would keep their
+  minted `role: rider` claim and keep driving while the owner's list said they had never signed in.
+- **The roster has three states, not two.** `pending` / `expired` / `accepted`. The old two-query split on
+  `accepted_at` reported an expired invitation as still waiting, hiding the one row that needs action.
+  Firestore can't express "expired" as a query that stays true as time passes, so `AuthState.invitations()`
+  streams the collection whole and `DriverInvitation` derives state from an injected `now`.
+- **`DriverInvitation.status` uses strictly-after**, mirroring `Invitation.is_expired` in
+  `ports/invitation_repository.py` (`now > expires_at`). A row exactly on its deadline is still live
+  server-side, and a test pins that on both sides.
+- **`InviteForm.maxNameLength` and `InvitationTtl.min`/`max` mirror `firestore.rules`**, the way
+  `RouteName.maxLength` does. Over-range values come back as a bare `permission-denied`, which reads as a
+  sign-in failure.
+- **A driver's name follows the same precedence rule as a route's name**: what the owner typed beats what
+  Google supplied at sign-in, beats a guess from the email local-part. `driver_name_source == 'owner'` is
+  what stops `handle_sign_in.resolve_driver_name` overwriting it on the next sign-in. Use
+  `DriverInvitation.nameFromEmail` for the fallback rather than re-deriving it — a driver spelled two ways
+  across two screens reads as two drivers.
+- **`DriverInviter.remove` withdraws an invitation; it does not revoke access.** `resolve_role_for_sign_in`
+  returns early for an account that already holds a role and never re-reads the collection, so an accepted
+  driver keeps `role: rider`. Revoking one needs a server-side claim change, which nothing implements yet.
+  The confirm dialog says so.
+- **`user_profiles/{uid}` is placeholder data and client-owned.** Nothing in the delivery pipeline reads
+  name/age/gender/phone; the collection exists so an account is more than what Google supplies. Written by
+  the client directly for the same reason `stop_instructions.owner_instructions` is — there is nothing for
+  a Cloud Function to recompute about a person's own description of themselves.
+- **`OwnerProfile.toMap()` omits unset fields; it must never write null.** The rules validate
+  `'age' in request.resource.data`, so a null age is a *present* key failing `is int` and the whole write
+  is refused. `AuthState.saveProfile` therefore `set()`s a whole-document replace, not a merge — omitting
+  a key is what lets clearing a field remove it. Bounds (`maxNameLength`, `minAge`/`maxAge`,
+  `maxPhoneLength`) mirror `firestore.rules`, same as `RouteName.maxLength`.
+- **`ProfileGender` stores a snake_case `wire` value, never the enum index**, and `parse` returns null for
+  anything it doesn't recognise so a newer build's document can't break an older one's screen.
+- `OwnerProfileScreen` takes its starting values as a constructor argument rather than streaming them —
+  a live stream would rewrite fields under the cursor while the owner types. Its dirty test is
+  `OwnerProfile.differsFrom` on parsed fields, **never** raw controller text, and `canPop` is refreshed by
+  a `ListenableBuilder` over `Listenable.merge([...controllers])` because one controller isn't enough here.
 - Debug tracing goes through `AppLog.auth` / `AppLog.owner` (`lib/util/app_log.dart`), which compiles away
   in release builds. Leave the calls in rather than adding and stripping them. Filter with
   `adb logcat | grep "BlueDot/"`.

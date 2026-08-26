@@ -1,72 +1,114 @@
-import 'package:dmm_delivery/models/rider_map_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The decoder is the one place a backend change can put the route silently
-/// in the wrong place rather than failing, so its behaviour is pinned here.
+import 'package:dmm_delivery/models/rider_map_data.dart';
+
+/// One rider's round, as the map screen reads it.
+///
+/// This used to decode an encoded polyline from a fixed file and place a
+/// randomised marker on it. The stops and their order are real now; the line
+/// between them and the absent position are what these tests hold honest.
+Map<String, dynamic> payload({
+  List<Map<String, dynamic>>? stops,
+  String source = 'stops',
+  Map<String, dynamic>? position,
+  int? total,
+  int? located,
+}) {
+  final list =
+      stops ??
+      [
+        {'seq_order': 0, 'lat': -45.9, 'lng': 170.4, 'address': '1 George St', 'customer_name': 'A'},
+        {'seq_order': 1, 'lat': -45.8, 'lng': 170.6, 'address': '2 George St', 'customer_name': 'B'},
+      ];
+  return {
+    'rider_key': 'uid-1',
+    'driver_name': 'Pawan',
+    'round': 'Run 2',
+    'run_id': 'run-1',
+    'route': {'source': source},
+    'stops': list,
+    'position': position,
+    'stops_total': total ?? list.length,
+    'stops_located': located ?? list.length,
+  };
+}
+
 void main() {
-  group('decodePolyline', () {
-    test('decodes a precision-6 shape to the right coordinates', () {
-      // Encoded from (-45.8716648, 170.5220401) and (-45.882208, 170.5058972)
-      // with the same algorithm the backend uses.
-      const shape = '`bxnvAozyfdI|qS|o^';
-      final points = decodePolyline(shape);
-
-      expect(points.length, 2);
-      expect(points.first.latitude, closeTo(-45.8716648, 1e-6));
-      expect(points.first.longitude, closeTo(170.5220401, 1e-6));
-      expect(points.last.latitude, closeTo(-45.882208, 1e-6));
-      expect(points.last.longitude, closeTo(170.5058972, 1e-6));
-    });
-
-    test('precision changes the result by an order of magnitude', () {
-      // Why shape_format travels with the payload instead of being assumed.
-      const shape = '`bxnvAozyfdI|qS|o^';
-      final six = decodePolyline(shape);
-      final five = decodePolyline(shape, precision: 5);
-      expect(five.first.latitude, closeTo(six.first.latitude * 10, 1e-3));
-    });
-
-    test('an empty shape yields no points rather than throwing', () {
-      expect(decodePolyline(''), isEmpty);
-    });
-  });
-
-  group('RiderMapData.fromJson', () {
-    Map<String, dynamic> payload({String source = 'static-mock'}) => {
-      'rider_key': 'tama-r.',
-      'driver_name': 'Tama R.',
-      'route': {'shape': '`bxnvAozyfdI|qS|o^', 'shape_format': 'polyline6', 'source': source},
-      'position': {'lat': -45.875, 'lng': 170.51, 'bearing': 143.2, 'source': 'randomised-mock'},
-      'bounds': {'min_lat': -45.9, 'max_lat': -45.87, 'min_lng': 170.5, 'max_lng': 170.53},
-      'stops': [
-        {'lat': -45.8716648, 'lng': 170.5220401, 'address': '33 Wickliffe Street, Dunedin'},
-      ],
-    };
-
-    test('reads the route, position and stops', () {
+  group('RiderMapData', () {
+    test('the route is the stops themselves, in order', () {
       final data = RiderMapData.fromJson(payload());
-      expect(data.driverName, 'Tama R.');
-      expect(data.route.length, 2);
-      expect(data.position.latitude, closeTo(-45.875, 1e-9));
-      expect(data.bearing, closeTo(143.2, 1e-9));
-      expect(data.stops.single.address, '33 Wickliffe Street, Dunedin');
+
+      expect(data.route, hasLength(2));
+      expect(data.route.first.latitude, -45.9);
+      expect(data.stops.first.customerName, 'A');
     });
 
-    test('flags mock provenance so the UI can say so', () {
-      expect(RiderMapData.fromJson(payload()).isMock, isTrue);
+    test('carries which run these stops belong to', () {
+      final data = RiderMapData.fromJson(payload());
+
+      expect(data.round, 'Run 2');
+      expect(data.runId, 'run-1');
     });
 
-    test('a real route with a real position is not flagged as mock', () {
-      final live = payload(source: 'valhalla');
-      (live['position'] as Map<String, dynamic>)['source'] = 'gps';
-      expect(RiderMapData.fromJson(live).isMock, isFalse);
+    test('no position is null, not a point at the origin', () {
+      // (0, 0) is in the Atlantic. A marker there is worse than no marker.
+      expect(RiderMapData.fromJson(payload()).position, isNull);
     });
 
-    test('survives a payload missing the optional pieces', () {
-      final data = RiderMapData.fromJson({'rider_key': 'x', 'driver_name': 'X'});
+    test('a position is read when one is actually sent', () {
+      final data = RiderMapData.fromJson(payload(position: {'lat': -45.87, 'lng': 170.5}));
+
+      expect(data.position?.latitude, -45.87);
+    });
+
+    test('a stop-joined line is flagged as a sequence, not a driven path', () {
+      expect(RiderMapData.fromJson(payload()).isSequenceOnly, isTrue);
+    });
+
+    test('only a routed provenance clears the flag', () {
+      // Read as "anything but valhalla" so a new non-routed source the client
+      // has never heard of still reads as a sequence rather than as a path.
+      expect(RiderMapData.fromJson(payload(source: 'valhalla')).isSequenceOnly, isFalse);
+      expect(RiderMapData.fromJson(payload(source: 'something-new')).isSequenceOnly, isTrue);
+    });
+
+    test('says when the run has stops the map cannot place', () {
+      // A map quietly missing three drops looks identical to a round with
+      // three fewer.
+      final data = RiderMapData.fromJson(payload(total: 12, located: 9));
+
+      expect(data.missingStopsNotice, '3 stops have no map location yet');
+    });
+
+    test('one missing stop reads in the singular', () {
+      expect(
+        RiderMapData.fromJson(payload(total: 3, located: 2)).missingStopsNotice,
+        '1 stop has no map location yet',
+      );
+    });
+
+    test('nothing missing says nothing', () {
+      expect(RiderMapData.fromJson(payload()).missingStopsNotice, isNull);
+    });
+
+    test('a driver with nothing assigned is an empty map, not a crash', () {
+      final data = RiderMapData.fromJson(payload(stops: const [], total: 0, located: 0));
+
+      expect(data.hasStops, isFalse);
       expect(data.route, isEmpty);
-      expect(data.stops, isEmpty);
-      expect(data.bearing, 0);
+      expect(data.position, isNull);
+    });
+
+    test('a delivered stop is marked as such', () {
+      final data = RiderMapData.fromJson(
+        payload(
+          stops: [
+            {'seq_order': 0, 'lat': -45.9, 'lng': 170.4, 'address': 'x', 'status': 'delivered'},
+          ],
+        ),
+      );
+
+      expect(data.stops.single.isDelivered, isTrue);
     });
   });
 }

@@ -22,7 +22,8 @@ RBAC `role: owner`. This is where the work has been.
 | Maps board | `owner_maps_screen.dart` | `owner-maps.html` | One card per driver, pull-to-refresh |
 | Rider detail | `owner_rider_screen.dart` | `owner-rider.html` | Route polyline + pulsing position marker |
 | Menu drawer | `owner_menu_drawer.dart` | `owner-menu.html` | Right-hand drawer: Settings, About |
-| Settings | `owner_settings_screen.dart` | — | Account, driver list, invite, sign out |
+| Settings | `owner_settings_screen.dart` | — | Account card → profile, driver roster (invite/rename/resend/remove), invitation validity, sign out |
+| Profile | `owner_profile_screen.dart` | — | Name, age, gender, phone — placeholder data, nothing reads it |
 | Upload → review | `upload_run_sheet_screen.dart`, `run_sheet_progress_screen.dart`, `run_sheet_diff_screen.dart` | — | PDF upload, parse progress, diff confirm |
 | Route map | `route_map_screen.dart` | — | Per-route stop sequence on a full-screen map |
 
@@ -36,7 +37,7 @@ keeps its scroll position.
 | Action | State |
 | --- | --- |
 | Calendar · Delivery roster | Deferred — card disabled, reads "Coming soon" |
-| Invites · Invite riders | Live, with a real pending-invite count |
+| Invites · Invite riders | Live; counts pending and expired separately |
 | Run sheets · Update routes | Live → `OwnerRoutesScreen` → `UploadRunSheetScreen` |
 
 **Design decisions worth not re-litigating**
@@ -197,12 +198,50 @@ match /rider_board/{riderUid} {
 **Delivery roster / calendar** — the disabled home quick action. No schedule
 data exists yet.
 
-**Rider invitations by phone + OTP.** Today `showInviteDriverDialog` takes a
-Gmail address and writes `driver_invitations/{lowercased-email}`; acceptance is
-a Google sign-in, with `before_sign_in_fn.py` setting `accepted_at` and the
-`role` claim. Moving to phone + OTP changes the document key (email → E.164),
-the identity provider (Google → Firebase phone auth), and the `isValidInvite()`
-rule that currently asserts `driver_email == email`. To be specified.
+## Driver invitations — decided, worth not re-litigating
+
+**There is no invitation link, and adding one would not help.** The
+`driver_invitations/{lowercased-email}` document is the credential:
+`before_sign_in_fn.py` authorises the invited address on its next Google
+sign-in whether or not the email ever arrived. So an owner can invite someone
+and tell them in person and acceptance works identically, the email is a
+courtesy rather than a gate, and there is no second secret to mint, expire or
+leak. Expiry is `expires_at` on that document, compared against the clock by
+`handle_sign_in.py` — that *is* the whole mechanism, and "resend" means
+"renew".
+
+**Three states, not two.** `pending` / `expired` / `accepted`. The roster used
+to be two queries partitioning on `accepted_at`, which reported an invitation
+past its deadline as still waiting — hiding the only row that needed the owner
+to do anything. Firestore cannot express "expired" as a query that stays true
+as time passes, so `AuthState.invitations()` streams the collection whole and
+`DriverInvitation` derives the state from an injected `now`. One row per
+driver; reading it whole costs nothing worth optimising.
+
+**Validity is configurable, in `app_settings/invitations`.** One document
+rather than per-owner, because two owners disagreeing would make the date
+quoted in the email a coin toss. It applies to invitations sent after it and
+to nothing already out there — `expires_at` is stamped at write time, so
+shortening the window cannot retroactively expire an invitation someone is
+holding. The email quotes the document's own `expires_at` rather than
+recomputing a TTL, so the date a driver is told is the date that gets enforced.
+
+**Removing a driver withdraws the invitation; it does not revoke access.**
+`resolve_role_for_sign_in` returns early for an account that already holds a
+role and never re-reads this collection, so an accepted driver keeps
+`role: rider` on their next token refresh. Revoking one needs a server-side
+claim change — not built. The confirm dialog says so rather than implying
+otherwise.
+
+**Redis was considered and rejected.** Expiry is one timestamp comparison
+against a document already being read at sign-in, a handful of times a day. A
+cache would add a server to run, an invalidation path, and a second place the
+truth lives.
+
+**Rider invitations by phone + OTP** remains the eventual target. Moving there
+changes the document key (email → E.164), the identity provider (Google →
+Firebase phone auth), and the `isInvite()` rule that currently asserts
+`driver_email == email`. To be specified.
 
 ## Leaving a screen mid-edit
 

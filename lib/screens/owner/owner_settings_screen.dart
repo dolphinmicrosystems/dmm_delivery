@@ -1,13 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/driver_invitation.dart';
+import '../../models/owner_profile.dart';
+import '../../services/driver_inviter.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/pill_badge.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
+import 'owner_profile_screen.dart';
 
+/// Reached from the hamburger menu. Account, the driver roster, and how long
+/// an invitation stays good for.
 class OwnerSettingsScreen extends StatelessWidget {
   const OwnerSettingsScreen({super.key, required this.authState});
 
@@ -21,28 +28,7 @@ class OwnerSettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SurfaceCard(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                const CircleAvatar(radius: 20, child: Icon(Icons.person_rounded)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        authState.user?.displayName ?? authState.user?.email ?? 'Owner',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      Text(authState.user?.email ?? '', style: const TextStyle(fontSize: 12, color: AppColors.inkMuted)),
-                    ],
-                  ),
-                ),
-                TextButton(onPressed: authState.signOut, child: const Text('Sign out')),
-              ],
-            ),
-          ),
+          _AccountCard(authState: authState),
           const SizedBox(height: 24),
           const SectionLabel('Drivers'),
           const SizedBox(height: 8),
@@ -53,70 +39,318 @@ class OwnerSettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _DriverList(authState: authState),
+          const SizedBox(height: 24),
+          const SectionLabel('Invitation validity'),
+          const SizedBox(height: 8),
+          _InvitationValidityCard(authState: authState),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
 }
 
+/// The account card, which is also the way into the profile.
+///
+/// Streamed rather than read once so the summary line updates the moment the
+/// profile screen saves - the owner comes straight back to this card, and a
+/// stale line under their own name is the first thing they would notice.
+class _AccountCard extends StatelessWidget {
+  const _AccountCard({required this.authState});
+
+  final AuthState authState;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<OwnerProfile>(
+      stream: authState.profile(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          AppLog.owner.error('profile stream failed', snapshot.error, snapshot.stackTrace);
+        }
+        final profile = snapshot.data ?? OwnerProfile.empty;
+        // The owner's own choice beats the name Google supplied, the same
+        // precedence rule route names and driver names follow.
+        final name = profile.displayName ?? authState.user?.displayName ?? authState.user?.email ?? 'Owner';
+
+        return SurfaceCard(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              InkWell(
+                onTap: () {
+                  AppLog.owner('open OwnerProfileScreen');
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => OwnerProfileScreen(authState: authState, initial: profile),
+                    ),
+                  );
+                },
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const CircleAvatar(radius: 20, child: Icon(Icons.person_rounded)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              authState.user?.email ?? '',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              profile.summary,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right_rounded, color: AppColors.inkMuted),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1, color: AppColors.hairline),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: TextButton(onPressed: authState.signOut, child: const Text('Sign out')),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// How long a new invitation stays good for.
+///
+/// Worth a control rather than a constant because the right answer is a
+/// judgement about people, not about software: an owner onboarding a driver
+/// who starts on Monday wants a short window, and one inviting a relief
+/// driver for the season wants a long one. The old value was seven days,
+/// hardcoded in the client, and nothing said so anywhere on screen.
+class _InvitationValidityCard extends StatelessWidget {
+  const _InvitationValidityCard({required this.authState});
+
+  final AuthState authState;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: authState.invitationTtlDays(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          AppLog.owner.error('invitation ttl stream failed', snapshot.error, snapshot.stackTrace);
+        }
+        final days = snapshot.data ?? InvitationTtl.fallback;
+
+        return SurfaceCard(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'New invitations expire after ${InvitationTtl.label(days)}',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'After that a driver signing in is turned away and has to be invited '
+                'again. Changing this affects new invitations only — invitations '
+                'already sent keep the date they were given.',
+                style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in InvitationTtl.presets)
+                    ChoiceChip(
+                      label: Text(InvitationTtl.label(preset)),
+                      selected: preset == days,
+                      onSelected: (selected) {
+                        if (!selected || preset == days) return;
+                        _set(context, preset);
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _set(BuildContext context, int days) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await authState.setInvitationTtlDays(days);
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('invitation ttl write failed', error, stack, {'days': days});
+      messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
+    }
+  }
+}
+
+/// Only ever invites a **driver**. Each owner is a separate business, so
+/// minting another owner is creating a company rather than adding a
+/// colleague - that is Blue Dot's decision, and its mechanism is the
+/// OWNER_EMAILS allowlist in Terraform, unreachable from any session here.
+/// `firestore.rules` enforces it too: a client write may only say `rider`.
+///
 /// Shared by this screen's "Register driver" button and the Owner home
 /// "Invite riders" quick action - the same invitation, reached from the two
 /// places an owner looks for it.
 ///
-/// Email + Google sign-in is the interim mechanism; the prototype's
-/// phone + OTP flow replaces it (see plan.md, "Rider invitations by phone").
+/// There is no link and nothing for the driver to click. The invitation
+/// document authorises the address on its next Google sign-in, so the email
+/// is a courtesy: an owner can invite someone and tell them in person, and
+/// acceptance works identically. The dialog says as much, because "invite
+/// sent" otherwise implies something is in flight that has to arrive.
 void showInviteDriverDialog(BuildContext context, AuthState authState) {
-  final controller = TextEditingController();
-  String? error;
-
   showDialog<void>(
     context: context,
-    builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setState) => AlertDialog(
+    builder: (_) => _InviteDriverDialog(authState: authState),
+  );
+}
+
+class _InviteDriverDialog extends StatefulWidget {
+  const _InviteDriverDialog({required this.authState});
+
+  final AuthState authState;
+
+  @override
+  State<_InviteDriverDialog> createState() => _InviteDriverDialogState();
+}
+
+class _InviteDriverDialogState extends State<_InviteDriverDialog> {
+  final _emailController = TextEditingController();
+  final _nameController = TextEditingController();
+  String? _error;
+  bool _sending = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit(int ttlDays) async {
+    final emailError = InviteForm.emailError(_emailController.text);
+    final nameError = InviteForm.nameError(_nameController.text);
+    if (emailError != null || nameError != null) {
+      setState(() => _error = emailError ?? nameError);
+      return;
+    }
+
+    setState(() {
+      _error = null;
+      _sending = true;
+    });
+
+    try {
+      await DriverInviter.invite(
+        email: _emailController.text,
+        ownerUid: widget.authState.user!.uid,
+        ttlDays: ttlDays,
+        name: InviteForm.nameToSubmit(_nameController.text),
+      );
+      if (mounted) Navigator.pop(context);
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('driver invite failed', error, stack);
+      if (mounted) {
+        setState(() {
+          _error = DriverInviter.errorMessage(error);
+          _sending = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The validity is read live rather than passed in, so the dialog quotes
+    // the window the owner set moments ago on the screen behind it.
+    return StreamBuilder<int>(
+      stream: widget.authState.invitationTtlDays(),
+      builder: (context, snapshot) {
+        final ttlDays = snapshot.data ?? InvitationTtl.fallback;
+
+        return AlertDialog(
           title: const Text('Register driver'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
-                controller: controller,
+                controller: _emailController,
                 autofocus: true,
                 keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(labelText: 'Driver\'s Gmail address'),
               ),
-              if (error != null) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nameController,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Their name (optional)',
+                  // Without a name the roster row is an email address, which
+                  // tells the owner nothing about who they invited until the
+                  // driver signs in and Google supplies one.
+                  helperText: 'Shown in your driver list straight away',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'They accept by signing in to the app with that Google account. '
+                'Valid for ${InvitationTtl.label(ttlDays)}.',
+                style: const TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
+              ),
+              if (_error != null) ...[
                 const SizedBox(height: 8),
-                Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
               ],
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            TextButton(
+              onPressed: _sending ? null : () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
             FilledButton(
-              onPressed: () async {
-                final email = controller.text.trim();
-                if (!email.contains('@')) {
-                  setState(() => error = 'Enter a valid email address.');
-                  return;
-                }
-                try {
-                  AppLog.owner('inviting driver', {'email': email});
-                  await authState.inviteDriver(email);
-                  AppLog.owner('driver invite written', {'email': email});
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                } catch (e, s) {
-                  AppLog.owner.error('driver invite failed', e, s, {'email': email});
-                  setState(() => error = 'Couldn\'t send the invite: $e');
-                }
-              },
-              child: const Text('Send invite'),
+              onPressed: _sending ? null : () => _submit(ttlDays),
+              child: Text(_sending ? 'Sending…' : 'Send invite'),
             ),
           ],
-        ),
-    ),
-  );
+        );
+      },
+    );
+  }
 }
 
+/// The roster: everyone invited, whatever state they are in.
+///
+/// One list rather than a filtered one. An owner looking here is asking "who
+/// drives for me and is anything stuck?", and the answer to the second half
+/// lives entirely in the rows a filtered list would have hidden.
 class _DriverList extends StatelessWidget {
   const _DriverList({required this.authState});
 
@@ -125,41 +359,306 @@ class _DriverList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: authState.acceptedDrivers(),
+      stream: authState.invitations(),
       builder: (context, snapshot) {
         // Same trap as the circuits stream: a rules rejection would
         // otherwise render as the benign "No drivers yet" empty state.
         if (snapshot.hasError) {
-          AppLog.owner.error('acceptedDrivers stream failed', snapshot.error, snapshot.stackTrace);
+          AppLog.owner.error('invitations stream failed', snapshot.error, snapshot.stackTrace);
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()));
+          return const Center(
+            child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()),
+          );
         }
-        final docs = snapshot.data?.docs ?? [];
-        AppLog.owner('acceptedDrivers snapshot', {'count': docs.length});
-        if (docs.isEmpty) {
+
+        // One clock for the whole list, taken once per build: rows computed
+        // against slightly different `now`s could disagree about which side
+        // of midnight an expiry falls on.
+        final now = DateTime.now();
+        final invitations = [
+          for (final doc in snapshot.data?.docs ?? const []) DriverInvitation.fromDoc(doc, now: now),
+        ]..sort(DriverInvitation.compare);
+
+        AppLog.owner('invitations snapshot', {
+          'total': invitations.length,
+          'expired': invitations.where((i) => i.status == InvitationStatus.expired).length,
+        });
+
+        if (invitations.isEmpty) {
           return const SurfaceCard(
             padding: EdgeInsets.all(16),
             child: Text(
-              'No drivers yet. Invited drivers appear here once they accept by signing in.',
+              'No drivers yet. Register one, and they appear here as soon as you invite '
+              'them — the row becomes active once they sign in.',
               style: TextStyle(color: AppColors.inkMuted, fontSize: 13),
             ),
           );
         }
+
         return SurfaceCard(
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: Column(
             children: [
-              for (final doc in docs)
-                ListTile(
-                  leading: const Icon(Icons.local_shipping_rounded, color: AppColors.brand),
-                  title: Text(doc.data()['driver_email'] as String? ?? doc.id),
-                  subtitle: const Text('Active driver', style: TextStyle(fontSize: 12)),
-                ),
+              for (final invitation in invitations) _DriverRow(invitation: invitation, authState: authState),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+enum _DriverAction { rename, resend, remove }
+
+class _DriverRow extends StatefulWidget {
+  const _DriverRow({required this.invitation, required this.authState});
+
+  final DriverInvitation invitation;
+  final AuthState authState;
+
+  @override
+  State<_DriverRow> createState() => _DriverRowState();
+}
+
+class _DriverRowState extends State<_DriverRow> {
+  bool _busy = false;
+
+  DriverInvitation get _invitation => widget.invitation;
+
+  ({Color color, Color background}) get _tone => switch (_invitation.status) {
+    InvitationStatus.accepted => (color: AppColors.success, background: AppColors.brandSoft),
+    InvitationStatus.pending => (color: AppColors.inkMuted, background: AppColors.surfaceMuted),
+    // The only row that is actually stuck, and the only one coloured to say so.
+    InvitationStatus.expired => (color: AppColors.warning, background: Color(0x1AE4A83A)),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = _tone;
+
+    return ListTile(
+      leading: Icon(
+        _invitation.status == InvitationStatus.accepted
+            ? Icons.local_shipping_rounded
+            : Icons.mark_email_unread_outlined,
+        color: _invitation.status == InvitationStatus.expired ? AppColors.warning : AppColors.brand,
+      ),
+      title: Text(
+        _invitation.displayName,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 2),
+          Text(
+            _invitation.email,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              PillBadge(label: _invitation.statusLabel, background: tone.background, foreground: tone.color),
+              // Shown for an owner in every state, not just once accepted: a
+              // pending owner invitation is the row most worth noticing, and
+              // 'Invited' alone says nothing about what was invited.
+              if (_invitation.isOwnerInvite) ...[const SizedBox(width: 6), const PillBadge(label: 'Owner')],
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _invitation.detailLabel,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.inkMuted),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      isThreeLine: true,
+      trailing: _busy
+          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          : PopupMenuButton<_DriverAction>(
+              tooltip: 'Driver options',
+              onSelected: _run,
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: _DriverAction.rename, child: Text('Rename')),
+                PopupMenuItem(
+                  value: _DriverAction.resend,
+                  // A resend aimed at an accepted driver would write their
+                  // acceptance back to null. The rules refuse it; disabling
+                  // it here stops the app offering a button that can't work.
+                  enabled: _invitation.canResend,
+                  child: const Text('Resend invite'),
+                ),
+                const PopupMenuItem(value: _DriverAction.remove, child: Text('Remove')),
+              ],
+            ),
+    );
+  }
+
+  Future<void> _run(_DriverAction action) async {
+    switch (action) {
+      case _DriverAction.rename:
+        await _rename();
+      case _DriverAction.resend:
+        await _resend();
+      case _DriverAction.remove:
+        await _remove();
+    }
+  }
+
+  Future<void> _rename() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _DriverNameDialog(current: _invitation.driverName),
+    );
+    if (name == null || !mounted) return;
+
+    await _guard(() => DriverInviter.rename(email: _invitation.email, name: name));
+  }
+
+  Future<void> _resend() async {
+    final ttlDays = await widget.authState.invitationTtlDays().first;
+    if (!mounted) return;
+
+    await _guard(
+      () => DriverInviter.resend(
+        invitation: _invitation,
+        ownerUid: widget.authState.user!.uid,
+        ttlDays: ttlDays,
+      ),
+      success: 'Invite resent — valid for ${InvitationTtl.label(ttlDays)}.',
+    );
+  }
+
+  Future<void> _remove() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Remove ${_invitation.displayName}?'),
+        content: Text(
+          // The pending branch used to carry a warning that deleting an
+          // invitation *granted* owner access, because an uninvited account
+          // became an owner. handle_sign_in now rejects anyone with neither
+          // an invitation nor a place on the owner allowlist, so withdrawing
+          // one finally does what the button says.
+          //
+          // The accepted branch still surprises people, and still has to:
+          // the role claim is minted at sign-in and never re-read from this
+          // collection, so removing the row cannot take it back.
+          _invitation.status == InvitationStatus.accepted
+              ? 'They drop off your list. They keep ${_invitation.role.label.toLowerCase()} '
+                    'access until their account is changed on the server, which isn\'t built yet.'
+              : 'Their invitation is withdrawn and they won\'t be able to sign in.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await _guard(() => DriverInviter.remove(_invitation.email));
+  }
+
+  /// Runs a write with the spinner, the mounted checks and the one error
+  /// translation every action on this row needs, so three call sites don't
+  /// each grow their own half of it.
+  Future<void> _guard(Future<void> Function() write, {String? success}) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _busy = true);
+    try {
+      await write();
+      if (success != null) messenger.showSnackBar(SnackBar(content: Text(success)));
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('driver action failed', error, stack, {'code': error.code});
+      messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
+    } finally {
+      // The row survives the write - the stream rebuilds it rather than
+      // replacing it - so the spinner has to be cleared explicitly.
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+}
+
+/// Renaming a driver. Pops the normalized name, or null if nothing changed -
+/// so a dialog dismissed with the same text writes nothing.
+class _DriverNameDialog extends StatefulWidget {
+  const _DriverNameDialog({required this.current});
+
+  final String? current;
+
+  @override
+  State<_DriverNameDialog> createState() => _DriverNameDialogState();
+}
+
+class _DriverNameDialogState extends State<_DriverNameDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.current ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final error = InviteForm.nameError(_controller.text);
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    final name = InviteForm.nameToSubmit(_controller.text);
+    if (name == null) {
+      setState(() => _error = 'Enter a name.');
+      return;
+    }
+    // Not raw text inequality: respacing a name, or typing it back exactly,
+    // is not a change worth a write.
+    Navigator.pop(context, InviteForm.isRenameOf(name, widget.current) ? name : null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename driver'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Name'),
+            onSubmitted: (_) => _save(),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'This is what you call them. Signing in won\'t overwrite it.',
+            style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
     );
   }
 }

@@ -7,6 +7,7 @@ import '../util/app_log.dart';
 import 'owner/owner_home_screen.dart';
 import 'owner/owner_maps_screen.dart';
 import 'owner/owner_menu_drawer.dart';
+import 'rider/driver_menu_drawer.dart';
 import 'rider/rider_active_screen.dart';
 import 'rider/rider_earnings_screen.dart';
 import 'rider/rider_orders_screen.dart';
@@ -27,7 +28,9 @@ class RootShell extends StatelessWidget {
     // Note this falls through to the owner shell for *any* non-driver role,
     // including a null one - so log the role that actually drove the choice.
     AppLog.owner('RootShell build', {'role': authState.role?.name, 'uid': authState.user?.uid});
-    return authState.role == AuthRole.driver ? _DriverShell(authState: authState) : _OwnerShell(authState: authState);
+    return authState.role == AuthRole.driver
+        ? _DriverShell(authState: authState)
+        : _OwnerShell(authState: authState);
   }
 }
 
@@ -101,6 +104,9 @@ class _DriverShellState extends State<_DriverShell> {
         final tabIndex = appState.riderTabIndex;
         return Scaffold(
           appBar: const _BlueDotAppBar(),
+          // Gives Scaffold a hamburger to render - without an endDrawer there
+          // was no menu affordance at all, and therefore no way to sign out.
+          endDrawer: DriverMenuDrawer(authState: widget.authState),
           body: IndexedStack(
             index: tabIndex,
             children: [
@@ -138,7 +144,10 @@ class _BlueDotAppBar extends StatelessWidget implements PreferredSizeWidget {
             height: 32,
             decoration: BoxDecoration(color: AppColors.brand, borderRadius: BorderRadius.circular(10)),
             alignment: Alignment.center,
-            child: const Text('B', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+            child: const Text(
+              'B',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+            ),
           ),
           const SizedBox(width: 10),
           const Text('Blue Dot', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),

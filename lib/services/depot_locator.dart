@@ -25,6 +25,19 @@ class DepotLocator {
   static String addressKey(String address) =>
       sha256.convert(utf8.encode(address.trim().toLowerCase())).toString();
 
+  /// Document id for `stop_instructions`, scoped to one business.
+  ///
+  /// Mirrors `firestore_paths.stop_instructions_id` the way [addressKey]
+  /// mirrors `address_key`. The address hash alone is not enough once there
+  /// is more than one owner: two businesses delivering to the same street
+  /// would share a document, and one owner's "leave at the side gate" would
+  /// surface on the other's run.
+  ///
+  /// `addressKey` is untouched as the second half - the hash contract is the
+  /// same, only the id built from it grew a prefix.
+  static String stopInstructionsId(String ownerUid, String addressKey) =>
+      '${ownerUid}__$addressKey';
+
   /// Null when the depot address has never been geocoded (no upload has run
   /// since it was configured). Callers render the route without a depot
   /// rather than guessing at one.
