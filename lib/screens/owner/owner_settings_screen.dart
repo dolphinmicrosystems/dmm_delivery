@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/driver_invitation.dart';
 import '../../models/owner_profile.dart';
+import '../../services/driver_access_api.dart';
 import '../../services/driver_inviter.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
@@ -385,6 +386,13 @@ class _DriverList extends StatelessWidget {
           'expired': invitations.where((i) => i.status == InvitationStatus.expired).length,
         });
 
+        // Split rather than sorted-to-the-bottom. Former staff are a different
+        // question from current ones, and a roster that runs straight from
+        // "Active driver" into "Removed" invites the owner to act on a row
+        // that no longer means anything.
+        final working = invitations.where((i) => !i.isRemoved).toList();
+        final removed = invitations.where((i) => i.isRemoved).toList();
+
         if (invitations.isEmpty) {
           return const SurfaceCard(
             padding: EdgeInsets.all(16),
@@ -396,20 +404,53 @@ class _DriverList extends StatelessWidget {
           );
         }
 
-        return SurfaceCard(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(
-            children: [
-              for (final invitation in invitations) _DriverRow(invitation: invitation, authState: authState),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (working.isEmpty)
+              const SurfaceCard(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Nobody drives for you at the moment. Everyone you have invited has been '
+                  'removed — restore one below, or invite somebody new.',
+                  style: TextStyle(color: AppColors.inkMuted, fontSize: 13),
+                ),
+              )
+            else
+              SurfaceCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  children: [
+                    for (final invitation in working)
+                      _DriverRow(invitation: invitation, authState: authState),
+                  ],
+                ),
+              ),
+            // Kept on screen rather than tidied away: nothing is deleted, the
+            // rounds these people drove still point at them, and restoring
+            // somebody is the only way they get back in.
+            if (removed.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              const SectionLabel('Removed'),
+              const SizedBox(height: 8),
+              SurfaceCard(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  children: [
+                    for (final invitation in removed)
+                      _DriverRow(invitation: invitation, authState: authState),
+                  ],
+                ),
+              ),
             ],
-          ),
+          ],
         );
       },
     );
   }
 }
 
-enum _DriverAction { rename, resend, remove }
+enum _DriverAction { rename, resend, remove, restore }
 
 class _DriverRow extends StatefulWidget {
   const _DriverRow({required this.invitation, required this.authState});
@@ -424,6 +465,10 @@ class _DriverRow extends StatefulWidget {
 class _DriverRowState extends State<_DriverRow> {
   bool _busy = false;
 
+  /// One client per row rather than a shared static: it holds an http.Client,
+  /// and a row disposed mid-request should take its connection with it.
+  final _api = DriverAccessApi();
+
   DriverInvitation get _invitation => widget.invitation;
 
   ({Color color, Color background}) get _tone => switch (_invitation.status) {
@@ -431,6 +476,10 @@ class _DriverRowState extends State<_DriverRow> {
     InvitationStatus.pending => (color: AppColors.inkMuted, background: AppColors.surfaceMuted),
     // The only row that is actually stuck, and the only one coloured to say so.
     InvitationStatus.expired => (color: AppColors.warning, background: Color(0x1AE4A83A)),
+    // Deliberately the quietest of the four. A removed driver needs nothing
+    // done about them; the row is here so the record is visible, not so it
+    // competes with the people who are actually working.
+    InvitationStatus.removed => (color: AppColors.inkMuted, background: AppColors.surfaceMuted),
   };
 
   @override
@@ -439,10 +488,16 @@ class _DriverRowState extends State<_DriverRow> {
 
     return ListTile(
       leading: Icon(
-        _invitation.status == InvitationStatus.accepted
-            ? Icons.local_shipping_rounded
-            : Icons.mark_email_unread_outlined,
-        color: _invitation.status == InvitationStatus.expired ? AppColors.warning : AppColors.brand,
+        switch (_invitation.status) {
+          InvitationStatus.accepted => Icons.local_shipping_rounded,
+          InvitationStatus.removed => Icons.person_off_outlined,
+          _ => Icons.mark_email_unread_outlined,
+        },
+        color: switch (_invitation.status) {
+          InvitationStatus.expired => AppColors.warning,
+          InvitationStatus.removed => AppColors.inkMuted,
+          _ => AppColors.brand,
+        },
       ),
       title: Text(
         _invitation.displayName,
@@ -484,18 +539,27 @@ class _DriverRowState extends State<_DriverRow> {
           : PopupMenuButton<_DriverAction>(
               tooltip: 'Driver options',
               onSelected: _run,
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: _DriverAction.rename, child: Text('Rename')),
-                PopupMenuItem(
-                  value: _DriverAction.resend,
-                  // A resend aimed at an accepted driver would write their
-                  // acceptance back to null. The rules refuse it; disabling
-                  // it here stops the app offering a button that can't work.
-                  enabled: _invitation.canResend,
-                  child: const Text('Resend invite'),
-                ),
-                const PopupMenuItem(value: _DriverAction.remove, child: Text('Remove')),
-              ],
+              // A removed row offers one thing. Rename and Resend are both
+              // edits to a live invitation, and neither means anything for
+              // somebody who no longer works here.
+              itemBuilder: (context) => _invitation.canRestore
+                  ? [const PopupMenuItem(value: _DriverAction.restore, child: Text('Restore'))]
+                  : [
+                      PopupMenuItem(
+                        value: _DriverAction.rename,
+                        enabled: _invitation.canRename,
+                        child: const Text('Rename'),
+                      ),
+                      PopupMenuItem(
+                        value: _DriverAction.resend,
+                        // A resend aimed at an accepted driver would write their
+                        // acceptance back to null. The rules refuse it; disabling
+                        // it here stops the app offering a button that can't work.
+                        enabled: _invitation.canResend,
+                        child: const Text('Resend invite'),
+                      ),
+                      const PopupMenuItem(value: _DriverAction.remove, child: Text('Remove')),
+                    ],
             ),
     );
   }
@@ -508,6 +572,8 @@ class _DriverRowState extends State<_DriverRow> {
         await _resend();
       case _DriverAction.remove:
         await _remove();
+      case _DriverAction.restore:
+        await _restore();
     }
   }
 
@@ -541,19 +607,18 @@ class _DriverRowState extends State<_DriverRow> {
       builder: (dialogContext) => AlertDialog(
         title: Text('Remove ${_invitation.displayName}?'),
         content: Text(
-          // The pending branch used to carry a warning that deleting an
-          // invitation *granted* owner access, because an uninvited account
-          // became an owner. handle_sign_in now rejects anyone with neither
-          // an invitation nor a place on the owner allowlist, so withdrawing
-          // one finally does what the button says.
-          //
-          // The accepted branch still surprises people, and still has to:
-          // the role claim is minted at sign-in and never re-read from this
-          // collection, so removing the row cannot take it back.
+          // Both branches used to over-promise, in opposite directions. The
+          // pending one claimed they "won't be able to sign in" while an
+          // uninvited account still became an owner; the accepted one admitted
+          // the role claim could not be taken back at all. Removal now disables
+          // the Firebase account, so the honest version is neither - it works,
+          // with an hour of slack.
           _invitation.status == InvitationStatus.accepted
-              ? 'They drop off your list. They keep ${_invitation.role.label.toLowerCase()} '
-                    'access until their account is changed on the server, which isn\'t built yet.'
-              : 'Their invitation is withdrawn and they won\'t be able to sign in.',
+              ? 'Their account is switched off and they lose access within the hour. '
+                    'Nothing is deleted — their rounds stay on record, and you can restore '
+                    'them later.'
+              : 'Their invitation is withdrawn, so they can\'t sign in. Nothing is '
+                    'deleted — you can restore them later.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
@@ -563,7 +628,42 @@ class _DriverRowState extends State<_DriverRow> {
     );
     if (confirmed != true || !mounted) return;
 
-    await _guard(() => DriverInviter.remove(_invitation.email));
+    await _guard(() async {
+      final result = await _api.remove(_invitation.email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          // Says what actually happened rather than one sentence for two
+          // different events. A pending driver had no account to switch off,
+          // and telling their owner they were "signed out" would be describing
+          // something that never occurred.
+          content: Text(
+            result.accountChanged
+                ? '${_invitation.displayName} removed — they lose access within the hour.'
+                : 'Invitation for ${_invitation.displayName} withdrawn.',
+          ),
+        ),
+      );
+    });
+  }
+
+  /// The only way a removed driver gets back in - their account is disabled,
+  /// so they cannot sign in to ask. No confirmation: restoring is the
+  /// reversible direction, and the row says plainly what it does.
+  Future<void> _restore() async {
+    await _guard(() async {
+      final result = await _api.restore(_invitation.email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.accountChanged
+                ? '${_invitation.displayName} restored — they can sign in again.'
+                : 'Invitation for ${_invitation.displayName} restored.',
+          ),
+        ),
+      );
+    });
   }
 
   /// Runs a write with the spinner, the mounted checks and the one error
@@ -578,6 +678,12 @@ class _DriverRowState extends State<_DriverRow> {
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('driver action failed', error, stack, {'code': error.code});
       messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
+    } on DriverAccessException catch (error, stack) {
+      // Remove and restore go over HTTP, not Firestore, so they fail with a
+      // different type entirely - and one whose message is already written
+      // for a person to read.
+      AppLog.owner.error('driver access failed', error, stack);
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
       // The row survives the write - the stream rebuilds it rather than
       // replacing it - so the spinner has to be cleared explicitly.

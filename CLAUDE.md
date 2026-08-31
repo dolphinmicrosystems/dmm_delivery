@@ -32,7 +32,10 @@ yet") are deliberate and explained there.
 - Run all tests: `flutter test` (134 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
-- Format: `dart format .`
+- Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
+  formatter's style, and Dart 3.13's tall-style formatter rewrites 58 files that nobody touched.
+  Match the surrounding style by hand instead. (Re-enable it the day someone reformats the whole
+  repo in one deliberate commit and pins `formatter: page_width` in `analysis_options.yaml`.)
 - Release build (what `cloudbuild.yaml` runs): `flutter build appbundle --release` — signing is not wired
   up yet, so this produces an unsigned/debug-keyed bundle
 - Regenerate environment config: `GCP_PROJECT_ID=i-destiny-428904-s2 ./tool/generate_infra_config.sh`
@@ -101,7 +104,8 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
                          long-press a card to rename (round/round_source) or delete
 OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
 OwnerRiderScreen       → RiderBoardApi.fetchRiderMap → encoded polyline + position
-OwnerSettingsScreen    → driver_invitations (invite / rename / resend / remove, all three states)
+OwnerSettingsScreen    → driver_invitations (invite / rename / resend, all four states) +
+                         DriverAccessApi → driver-access function (remove / restore)
                          + app_settings/invitations (how long a new invite stays valid)
                          + user_profiles/{uid} (the account card) → OwnerProfileScreen
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
@@ -177,7 +181,7 @@ its own when the backend goes real. See plan.md's table before assuming a number
   backend's spelling (`rider`) and `role.label` is the app's (`Driver`), the same split as `AuthRole.driver`.
   An owner invite gets a confirm step and a badge on every roster row, because it is a much larger grant
   than a driver invite and a dropdown does not say so.
-- **`DriverInviter` owns every `driver_invitations` write**, for the same reason `RouteRenamer` owns the
+- **`DriverInviter` owns every `driver_invitations` write the client still makes**, for the same reason `RouteRenamer` owns the
   `circuits` rename: the rules accept exact shapes. An invite is the whole document with `accepted_at`
   null; a rename is **exactly** `driver_name` + `driver_name_source` and is a separate write precisely so
   it can apply to a driver who has already accepted. Routing a rename through the invite shape blanks
@@ -186,10 +190,15 @@ its own when the backend goes real. See plan.md's table before assuming a number
   *incoming* document, so the rules also check `resource.data.accepted_at == null` on the update path, and
   `DriverInvitation.canResend` disables the menu item. Both halves matter — the driver would keep their
   minted `role: rider` claim and keep driving while the owner's list said they had never signed in.
-- **The roster has three states, not two.** `pending` / `expired` / `accepted`. The old two-query split on
-  `accepted_at` reported an expired invitation as still waiting, hiding the one row that needs action.
-  Firestore can't express "expired" as a query that stays true as time passes, so `AuthState.invitations()`
-  streams the collection whole and `DriverInvitation` derives state from an injected `now`.
+- **The roster has four states, not two.** `pending` / `expired` / `accepted` / `removed`. The old
+  two-query split on `accepted_at` reported an expired invitation as still waiting, hiding the one row
+  that needs action. Firestore can't express "expired" as a query that stays true as time passes, so
+  `AuthState.invitations()` streams the collection whole and `DriverInvitation` derives state from an
+  injected `now`. `removed` is the exception — it is a stored field, not derived — and it is checked
+  **first**, ahead of expiry, mirroring `handle_sign_in.resolve_sign_in`: a driver who was removed and
+  whose invitation then lapsed reads as removed, because "expired" offers a resend and a resend would
+  quietly re-hire them. Removed rows render in their own section, not sorted to the bottom of the
+  live one.
 - **`DriverInvitation.status` uses strictly-after**, mirroring `Invitation.is_expired` in
   `ports/invitation_repository.py` (`now > expires_at`). A row exactly on its deadline is still live
   server-side, and a test pins that on both sides.
@@ -201,10 +210,19 @@ its own when the backend goes real. See plan.md's table before assuming a number
   what stops `handle_sign_in.resolve_driver_name` overwriting it on the next sign-in. Use
   `DriverInvitation.nameFromEmail` for the fallback rather than re-deriving it — a driver spelled two ways
   across two screens reads as two drivers.
-- **`DriverInviter.remove` withdraws an invitation; it does not revoke access.** `resolve_role_for_sign_in`
-  returns early for an account that already holds a role and never re-reads the collection, so an accepted
-  driver keeps `role: rider`. Revoking one needs a server-side claim change, which nothing implements yet.
-  The confirm dialog says so.
+- **Removing a driver is `DriverAccessApi`, not a Firestore write, and nothing is deleted.** It used to
+  be `_collection.doc(email).delete()`, which was half a removal in both directions: an accepted driver
+  kept the `role: rider` claim minted at sign-in and carried on delivering, and the uid that document
+  carries is what `delivery_run.rider_id` and `route_assignments.driver_uid` point at, so deleting it
+  turned every round they ever drove into a dangling id. Removal now sets `removed_at` *and* disables
+  the Firebase account, which are two systems and therefore a Cloud Function
+  (`driver-access` → `manage_driver_access.py`) — a mobile client cannot hold the Admin SDK, and only
+  the account half stops a driver who is already signed in, because they are renewing a refresh token
+  rather than signing in again. `firestore.rules` refuses a `driver_invitations` delete outright and
+  refuses a client write that sets `removed_at`, so neither half can regress quietly. Restore is the
+  same call with `action: restore`, and it is the *only* way back — a removed driver cannot sign in to
+  ask. Worst case they keep working for up to an hour, the remaining life of the ID token in their
+  hand; the confirm dialog says so rather than promising instant.
 - **`user_profiles/{uid}` is placeholder data and client-owned.** Nothing in the delivery pipeline reads
   name/age/gender/phone; the collection exists so an account is more than what Google supplies. Written by
   the client directly for the same reason `stop_instructions.owner_instructions` is — there is nothing for

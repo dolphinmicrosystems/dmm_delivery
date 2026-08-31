@@ -20,6 +20,11 @@ import '../util/app_log.dart';
 ///    Separate precisely so it can apply to a driver who has already
 ///    accepted; routed through the invite shape it would blank their
 ///    `accepted_at` and drop them out of the roster.
+///
+/// Removing and restoring a driver are *not* here, and not writes at all -
+/// see `DriverAccessApi`. They need the Admin SDK to disable the Firebase
+/// account, which is the only half that stops a driver who is already signed
+/// in, and the rules refuse a client write that sets `removed_at`.
 class DriverInviter {
   const DriverInviter._();
 
@@ -110,20 +115,18 @@ class DriverInviter {
     AppLog.owner('driver renamed', {});
   }
 
-  /// Removes a driver from the roster.
-  ///
-  /// Worth being clear about what this does not do. It withdraws the
-  /// invitation, so an unaccepted driver can no longer sign in and become a
-  /// rider. It does **not** revoke a role claim already minted: a driver who
-  /// has accepted keeps `role: rider` on their next token refresh, because
-  /// `resolve_role_for_sign_in` returns early for an account that already
-  /// has a role and never re-reads this collection. Revoking an active
-  /// driver needs a claim change server-side, which nothing implements yet.
-  static Future<void> remove(String email) async {
-    AppLog.owner('removing driver invitation', {});
-    await _collection.doc(InviteForm.normalizeEmail(email)).delete();
-    AppLog.owner('driver invitation removed', {});
-  }
+  // Removing and restoring a driver used to live here, as a document delete.
+  // Both moved to `DriverAccessApi`, and the delete is gone entirely:
+  //
+  //  * it was only half a removal - an accepted driver keeps the role claim
+  //    minted at sign-in, so deleting the row took them off the owner's list
+  //    while they carried on delivering; and
+  //  * `delivery_run.rider_id` and `route_assignments.driver_uid` point at
+  //    the uid that document carries, so deleting it turned every round they
+  //    ever drove into a dangling id.
+  //
+  // `firestore.rules` now refuses a `driver_invitations` delete outright, so
+  // reinstating it here would fail rather than regress quietly.
 
   /// The sentence to show when one of these writes is refused.
   ///

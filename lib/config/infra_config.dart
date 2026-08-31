@@ -4,12 +4,14 @@
 // state, not from the backend repo's filesystem - see the script for why.
 //
 // Sources:
-//   runSheetsBucket              <- process-run-sheet Cloud Function's
-//                                    Storage trigger config
+//   runSheetsBucket              <- process-run-sheet-upload Cloud
+//                                    Function's Storage trigger config
 //                                    (project i-destiny-428904-s2, region us-west1)
 //   googleSignInServerClientId   <- Firebase Auth's Google IdP config
 //                                    (projects/i-destiny-428904-s2/defaultSupportedIdpConfigs/google.com)
 //   riderBoardUrl                <- rider-board Cloud Function's URL
+//                                    (project i-destiny-428904-s2, region us-west1)
+//   driverAccessUrl              <- driver-access Cloud Function's URL
 //                                    (project i-destiny-428904-s2, region us-west1)
 class InfraConfig {
   InfraConfig._();
@@ -20,7 +22,15 @@ class InfraConfig {
   ///
   /// Empty when the function isn't deployed in the target project - callers
   /// must check rather than parsing it blindly.
-  static const riderBoardUrl = 'https://us-west1-i-destiny-428904-s2.cloudfunctions.net/rider-board';
+  static const riderBoardUrl = 'https://rider-board-kj5b5lcoma-uw.a.run.app';
+
+  /// The driver-access endpoint: the only way to remove or restore a driver.
+  ///
+  /// It exists because disabling a Firebase account needs the Admin SDK,
+  /// which a mobile client cannot hold - and because the Firestore half
+  /// alone would leave a removed driver still delivering. Authenticated the
+  /// same way as `riderBoardUrl`, and empty on the same terms.
+  static const driverAccessUrl = 'https://driver-access-kj5b5lcoma-uw.a.run.app';
 
   /// The OAuth web client ID backing Firebase's Google sign-in provider.
   /// Not a secret (it's a public identifier apps embed directly), but

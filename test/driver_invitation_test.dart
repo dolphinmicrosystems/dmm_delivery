@@ -14,6 +14,7 @@ DriverInvitation invitation({
   DateTime? invitedAt,
   DateTime? expiresAt,
   DateTime? acceptedAt,
+  DateTime? removedAt,
 }) {
   return DriverInvitation(
     email: email,
@@ -25,6 +26,7 @@ DriverInvitation invitation({
     invitedAt: invitedAt ?? now.subtract(const Duration(days: 2)),
     expiresAt: expiresAt ?? now.add(const Duration(days: 5)),
     acceptedAt: acceptedAt,
+    removedAt: removedAt,
   );
 }
 
@@ -368,5 +370,79 @@ void main() {
       expect(invitation(role: InvitationRole.owner).isOwnerInvite, isTrue);
     });
   });
-}
 
+  group('removal', () {
+    test('a removed driver reads as removed, whatever else is true of them', () {
+      final gone = invitation(
+        acceptedAt: now.subtract(const Duration(days: 40)),
+        removedAt: now.subtract(const Duration(days: 1)),
+      );
+
+      expect(gone.status, InvitationStatus.removed);
+    });
+
+    test('removal is reported ahead of expiry', () {
+      // Mirrors handle_sign_in.resolve_sign_in, which checks the same two in
+      // the same order. "Expired" invites a resend, and a resend aimed at
+      // somebody the owner removed would quietly re-hire them.
+      final gone = invitation(
+        expiresAt: now.subtract(const Duration(days: 10)),
+        removedAt: now.subtract(const Duration(days: 20)),
+      );
+
+      expect(gone.status, InvitationStatus.removed);
+    });
+
+    test('a removed row offers restore and nothing else', () {
+      final gone = invitation(removedAt: now.subtract(const Duration(days: 3)));
+
+      expect(gone.canRestore, isTrue);
+      // Both are edits to a live invitation. Renaming somebody who no longer
+      // works here is an edit with no reader, and resending would be a re-hire
+      // dressed up as a reminder.
+      expect(gone.canRename, isFalse);
+      expect(gone.canResend, isFalse);
+    });
+
+    test('a working driver offers everything except restore', () {
+      final working = invitation(acceptedAt: now.subtract(const Duration(days: 5)));
+
+      expect(working.canRestore, isFalse);
+      expect(working.canRename, isTrue);
+    });
+
+    test('the detail line says when they left, not when the invite lapsed', () {
+      // The question an owner asks about this row is "when did they go?". The
+      // invitation's own dates stopped being interesting the moment somebody
+      // was removed.
+      final gone = invitation(
+        expiresAt: now.subtract(const Duration(days: 30)),
+        removedAt: now.subtract(const Duration(days: 1)),
+      );
+
+      expect(gone.statusLabel, 'Removed');
+      expect(gone.detailLabel, 'Removed yesterday');
+    });
+
+    test('removed rows sort below everyone still working', () {
+      final rows = [
+        invitation(email: 'gone@gmail.com', removedAt: now.subtract(const Duration(days: 1))),
+        invitation(email: 'working@gmail.com', acceptedAt: now.subtract(const Duration(days: 5))),
+        invitation(email: 'stuck@gmail.com', expiresAt: now.subtract(const Duration(days: 2))),
+      ]..sort(DriverInvitation.compare);
+
+      // Expired first: the only row that is actually stuck.
+      expect(rows.map((r) => r.email), ['stuck@gmail.com', 'working@gmail.com', 'gone@gmail.com']);
+    });
+
+    test('a removed invitation is not counted as pending on the home card', () {
+      // Otherwise the Owner home reports work outstanding for people who have
+      // left, and the count never goes down.
+      final summary = DriverInvitation.rosterSummary([
+        invitation(email: 'gone@gmail.com', removedAt: now.subtract(const Duration(days: 1))),
+      ]);
+
+      expect(summary, 'No invites pending acceptance');
+    });
+  });
+}

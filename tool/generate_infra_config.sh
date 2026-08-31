@@ -110,6 +110,17 @@ if [ -z "$RIDER_BOARD_URL" ]; then
   echo "         report that it isn't configured. Deploy it, then re-run." >&2
 fi
 
+# Removing or restoring a driver. Same not-fatal-when-absent treatment as
+# rider-board above, and the same reason: this one is newer still.
+DRIVER_ACCESS_URL=$(gcloud functions describe driver-access \
+  --region="$FUNCTION_REGION" --project="$PROJECT_ID" --gen2 \
+  --format="value(serviceConfig.uri)" "${ACCOUNT_FLAG[@]}" 2>/dev/null || true)
+if [ -z "$DRIVER_ACCESS_URL" ]; then
+  echo "warning: driver-access function not found in $PROJECT_ID/$FUNCTION_REGION -" >&2
+  echo "         driverAccessUrl will be empty and removing a driver will report" >&2
+  echo "         that it isn't configured. Deploy it, then re-run." >&2
+fi
+
 TOKEN=$(gcloud auth print-access-token "${ACCOUNT_FLAG[@]}")
 SIGNIN_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT_ID" \
   "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/defaultSupportedIdpConfigs/google.com" \
@@ -132,6 +143,8 @@ cat > "$OUT" <<EOF
 //                                    (projects/$PROJECT_ID/defaultSupportedIdpConfigs/google.com)
 //   riderBoardUrl                <- rider-board Cloud Function's URL
 //                                    (project $PROJECT_ID, region $FUNCTION_REGION)
+//   driverAccessUrl              <- driver-access Cloud Function's URL
+//                                    (project $PROJECT_ID, region $FUNCTION_REGION)
 class InfraConfig {
   InfraConfig._();
 
@@ -142,6 +155,14 @@ class InfraConfig {
   /// Empty when the function isn't deployed in the target project - callers
   /// must check rather than parsing it blindly.
   static const riderBoardUrl = '$RIDER_BOARD_URL';
+
+  /// The driver-access endpoint: the only way to remove or restore a driver.
+  ///
+  /// It exists because disabling a Firebase account needs the Admin SDK,
+  /// which a mobile client cannot hold - and because the Firestore half
+  /// alone would leave a removed driver still delivering. Authenticated the
+  /// same way as \`riderBoardUrl\`, and empty on the same terms.
+  static const driverAccessUrl = '$DRIVER_ACCESS_URL';
 
   /// The OAuth web client ID backing Firebase's Google sign-in provider.
   /// Not a secret (it's a public identifier apps embed directly), but

@@ -33,7 +33,7 @@ enum InvitationRole {
 
 /// Where an invitation has got to.
 ///
-/// Three states, not two. The app used to partition `driver_invitations` into
+/// Four states, not two. The app used to partition `driver_invitations` into
 /// pending and accepted, which left an invitation that had quietly run out of
 /// time reading as "still waiting" - the one state that actually needs the
 /// owner to do something was the one state they couldn't see.
@@ -50,6 +50,16 @@ enum InvitationStatus {
   /// live. Set server-side by `before_sign_in_fn.py`; a client cannot claim
   /// it (firestore.rules requires `accepted_at == null` on every client write).
   accepted,
+
+  /// The owner switched this person off. Their record is intact - name,
+  /// address, acceptance date and uid all still here - and restoring them is
+  /// clearing one field, not re-inviting a colleague who never really left.
+  ///
+  /// Checked before every other state, and before expiry in particular. A
+  /// driver who was removed and whose invitation then lapsed is removed, not
+  /// expired: "expired" invites a resend, and a resend would quietly re-hire
+  /// them. `handle_sign_in.resolve_sign_in` orders the two the same way.
+  removed,
 }
 
 /// One row of the Owner's driver list.
@@ -75,6 +85,7 @@ class DriverInvitation {
     this.invitedAt,
     this.expiresAt,
     this.acceptedAt,
+    this.removedAt,
   });
 
   /// Lowercased invited address, which is also the document id.
@@ -99,6 +110,17 @@ class DriverInvitation {
   final DateTime? expiresAt;
   final DateTime? acceptedAt;
 
+  /// When the owner switched this person off, or null while they work here.
+  ///
+  /// Written by the `driver-access` function under the Admin SDK, never by
+  /// this app: removing somebody is two writes to two systems - this field
+  /// and the Firebase account - and doing only one of them is what leaves a
+  /// removed driver still delivering. `firestore.rules` refuses a client
+  /// write that sets it to anything but null.
+  final DateTime? removedAt;
+
+  bool get isRemoved => removedAt != null;
+
   /// The name the owner typed beats the one Google supplied, which beats a
   /// guess from the address. Same precedence rule as a route's name and a
   /// stop's instructions - the owner is the only person who reads this list,
@@ -112,6 +134,8 @@ class DriverInvitation {
   }
 
   InvitationStatus get status {
+    // First, and ahead of expiry: see InvitationStatus.removed.
+    if (isRemoved) return InvitationStatus.removed;
     if (acceptedAt != null) return InvitationStatus.accepted;
     final expiry = expiresAt;
     // Strictly after, mirroring `Invitation.is_expired` in
@@ -131,11 +155,18 @@ class DriverInvitation {
   /// `accepted_at` back to null - they would keep their role claim and keep
   /// driving while the owner's list said they had never signed in. The rules
   /// block it too; this stops the app offering a button that always fails.
-  bool get canResend => status != InvitationStatus.accepted;
+  bool get canResend => status != InvitationStatus.accepted && status != InvitationStatus.removed;
 
   /// Renaming works in every state, including accepted - it is display text,
   /// and it travels as its own narrow write for exactly that reason.
-  bool get canRename => true;
+  ///
+  /// Removed rows are the exception, and not because the rules refuse it:
+  /// renaming somebody who no longer works here is an edit with no reader,
+  /// and offering it implies the row is still live.
+  bool get canRename => !isRemoved;
+
+  /// Whether Restore is the action this row offers instead of the others.
+  bool get canRestore => isRemoved;
 
   /// The short state word on the row.
   /// Whether this invitation hands over the keys. Worth its own name: the
@@ -149,6 +180,7 @@ class DriverInvitation {
     InvitationStatus.accepted => 'Active ${role.label.toLowerCase()}',
     InvitationStatus.pending => 'Invited',
     InvitationStatus.expired => 'Invitation expired',
+    InvitationStatus.removed => 'Removed',
   };
 
   /// The line under it: when this happened, or when it runs out.
@@ -156,6 +188,9 @@ class DriverInvitation {
     InvitationStatus.accepted => acceptedAt == null ? 'Accepted' : 'Accepted ${_ago(acceptedAt!)}',
     InvitationStatus.expired => expiresAt == null ? 'Expired' : 'Expired ${_ago(expiresAt!)}',
     InvitationStatus.pending => expiresAt == null ? 'Awaiting sign-in' : 'Expires ${_ahead(expiresAt!)}',
+    // Says when, because the question an owner asks about this row is "when
+    // did they leave" rather than anything about the invitation.
+    InvitationStatus.removed => removedAt == null ? 'Removed' : 'Removed ${_ago(removedAt!)}',
   };
 
   /// What the owner has to act on, first. An expired invitation is the only
@@ -166,6 +201,10 @@ class DriverInvitation {
     InvitationStatus.expired => 0,
     InvitationStatus.pending => 1,
     InvitationStatus.accepted => 2,
+    // Last, and in practice in its own section: nothing about a removed row
+    // needs doing, and a roster that opens on former staff buries the people
+    // who currently drive.
+    InvitationStatus.removed => 3,
   };
 
   /// Newest first inside each group, so a fresh invite doesn't land at the
@@ -212,6 +251,7 @@ class DriverInvitation {
       invitedAt: (data['invited_at'] as Timestamp?)?.toDate(),
       expiresAt: (data['expires_at'] as Timestamp?)?.toDate(),
       acceptedAt: (data['accepted_at'] as Timestamp?)?.toDate(),
+      removedAt: (data['removed_at'] as Timestamp?)?.toDate(),
     );
   }
 
