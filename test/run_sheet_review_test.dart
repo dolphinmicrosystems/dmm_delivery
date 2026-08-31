@@ -107,6 +107,38 @@ void main() {
       return layer.polylines.single.points;
     }
 
+    testWidgets('a pin reports which stop was tapped', (tester) async {
+      // The review screen's pins were inert while the confirmed route
+      // screen's were tappable - backwards, since this is the screen where
+      // an owner is deciding whether a stop belongs on the run at all.
+      final tapped = <int>[];
+      final pinned = [
+        _stop('a', -45.87, 170.48, const []),
+        _stop('b', -45.88, 170.49, const []),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 400,
+              child: RoutePreviewMap(stops: pinned, onStopTap: tapped.add),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // By index, not by identity: the callback carries the position in the
+      // list the owner is looking at, which is what the sheet titles itself
+      // with and what removal indexes into.
+      await tester.tap(find.byType(StopPin).last);
+      await tester.pump();
+
+      expect(tapped, [1]);
+    });
+
     final stops = [
       _stop('a', -45.87, 170.48, const []),
       _stop('b', -45.88, 170.49, const []),

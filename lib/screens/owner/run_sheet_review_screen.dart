@@ -81,6 +81,15 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   bool _reordered = false;
   bool _submitting = false;
 
+  /// Stops the owner has taken off this run, newest first, kept whole so the
+  /// removal can be undone without re-uploading the sheet.
+  ///
+  /// Nothing is written until Confirm. Removing a stop means leaving its id
+  /// out of `manual_order`, which is what `_apply_manual_order` in
+  /// confirm_run_sheet_upload.py reads as "drop this one" - so the entire
+  /// edit lives in this list until the owner commits it.
+  final List<({RunStop stop, int index})> _removed = [];
+
   RunSheetDiff get _diff => RunSheetDiff.fromMap(widget.data['diff'] as Map<String, dynamic>?);
   String? get _draftRunId => widget.data['draft_run_id'] as String?;
 
@@ -106,8 +115,15 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   /// Confirm, so both are worth stopping for.
   PendingChanges get _pendingChanges => PendingChanges(
         renamed: RouteName.isRenameOf(_nameController.text, _originalName),
-        reordered: _reordered,
+        reordered: _reordered || _removed.isNotEmpty,
       );
+
+  /// Whether Confirm has to send a stop list at all.
+  ///
+  /// An untouched review must not re-assert the pipeline's own sequence as
+  /// though a person had chosen it - see `_reordered`. A removal counts for
+  /// the same reason a drag does: it is a decision only the owner could make.
+  bool get _stopsEdited => _reordered || _removed.isNotEmpty;
 
   /// Back was pressed with unapplied edits. Unlike the update screen this
   /// offers no "save" - the two ways to resolve a review are already on
@@ -192,9 +208,63 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
 
   void _resetOrder() {
     setState(() {
-      _stops = _optimizedOrder;
+      // Removed stops stay removed. The button says "Reset order", and a
+      // button that also quietly put three deleted rows back would be doing
+      // something its label does not admit to - the header's own Undo is
+      // where a removal is taken back.
+      final gone = {for (final entry in _removed) entry.stop.id};
+      _stops = [for (final stop in _optimizedOrder) if (!gone.contains(stop.id)) stop];
       _reordered = false;
     });
+  }
+
+  /// Takes a stop off this run. Nothing is written - see [_removed].
+  void _removeStop(int index) {
+    final messenger = ScaffoldMessenger.of(context);
+    final stop = _stops[index];
+    setState(() {
+      _stops = [..._stops]..removeAt(index);
+      _removed.insert(0, (stop: stop, index: index));
+    });
+
+    // Undo on the snackbar as well as in the header. Removing the wrong row
+    // of 59 near-identical addresses is easy, and the moment someone notices
+    // is the moment the snackbar is still up.
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Removed ${stop.customerName.isEmpty ? stop.address : stop.customerName}'),
+        action: SnackBarAction(label: 'Undo', onPressed: () => _restoreStop(stop.id)),
+      ),
+    );
+  }
+
+  /// Puts a removed stop back where it was, if that position still exists.
+  void _restoreStop(String stopId) {
+    final entry = _removed.where((r) => r.stop.id == stopId).firstOrNull;
+    if (entry == null) return;
+    setState(() {
+      _removed.removeWhere((r) => r.stop.id == stopId);
+      final at = entry.index.clamp(0, _stops.length);
+      _stops = [..._stops]..insert(at, entry.stop);
+    });
+  }
+
+  void _showStop(RunStop stop) {
+    final runId = _draftRunId;
+    if (runId == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ReviewStopSheet(
+        stop: stop,
+        position: _stops.indexOf(stop) + 1,
+        onRemove: () {
+          Navigator.pop(context);
+          _removeStop(_stops.indexOf(stop));
+        },
+      ),
+    );
   }
 
   Future<void> _respond(String status) async {
@@ -218,6 +288,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
     AppLog.owner('run sheet $status', {
       'uploadId': widget.uploadId,
       'reordered': _reordered,
+      'removed': _removed.length,
       'renamed': renamed,
       'stops': manualOrder.length,
     });
@@ -225,7 +296,10 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
     try {
       await FirebaseFirestore.instance.collection('run_sheet_upload').doc(widget.uploadId).update({
         'status': status,
-        if (status == 'confirmed' && _reordered) 'manual_order': manualOrder,
+        // The stops this run keeps, in order. A stop the owner removed is
+        // simply absent - confirm_run_sheet_upload reads a short list as
+        // "drop the rest" and marks them excluded rather than deleting them.
+        if (status == 'confirmed' && _stopsEdited) 'manual_order': manualOrder,
         // Only when a person actually changed it. An untouched field leaves
         // the backend's own route_name standing, and leaves the route
         // following the sheet's heading rather than pinning it to a name
@@ -341,7 +415,15 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
               SizedBox(
                 height: 240,
                 width: double.infinity,
-                child: RoutePreviewMap(stops: _stops, depot: _depot),
+                child: RoutePreviewMap(
+                  stops: _stops,
+                  depot: _depot,
+                  // The pins were dead on this screen while the confirmed
+                  // route screen's were tappable - backwards, since this is
+                  // the one screen where an owner is actively checking
+                  // whether a pin belongs on the run at all.
+                  onStopTap: (index) => _showStop(_stops[index]),
+                ),
               ),
               Expanded(child: _buildList()),
               _buildActions(),
@@ -371,6 +453,8 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         unitCount: unitCount,
         totals: totals,
         skipped: _skipped,
+        removed: _removed,
+        onRestore: _restoreStop,
         depotResolved: _depot != null,
         nameController: _nameController,
         nameError: _nameError,
@@ -398,12 +482,24 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
             child: StopCard(
               stop: stop,
               position: index + 1,
-              trailing: ReorderableDragStartListener(
-                index: index,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  child: Icon(Icons.drag_indicator_rounded, color: AppColors.inkMuted),
-                ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: _submitting ? null : () => _removeStop(index),
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    color: AppColors.inkMuted,
+                    tooltip: 'Remove this stop',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  ReorderableDragStartListener(
+                    index: index,
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                      child: Icon(Icons.drag_indicator_rounded, color: AppColors.inkMuted),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -457,6 +553,8 @@ class _ReviewHeader extends StatelessWidget {
     required this.unitCount,
     required this.totals,
     required this.skipped,
+    required this.removed,
+    required this.onRestore,
     required this.depotResolved,
     required this.nameController,
     required this.nameError,
@@ -470,6 +568,13 @@ class _ReviewHeader extends StatelessWidget {
   final int unitCount;
   final List<MilkTotal> totals;
   final int skipped;
+
+  /// Stops the owner has taken off this run, newest first. Shown rather than
+  /// hidden: a removal is not written until Confirm, so this panel is the
+  /// only record that it happened, and the only way back.
+  final List<({RunStop stop, int index})> removed;
+  final void Function(String stopId) onRestore;
+
   final bool depotResolved;
 
   /// Owned by the screen's State, not by this widget: the list this header
@@ -574,6 +679,10 @@ class _ReviewHeader extends StatelessWidget {
             'rather than from and back to base.',
           ),
         ],
+        if (removed.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _RemovedStops(removed: removed, onRestore: onRestore),
+        ],
         if (totals.isNotEmpty) ...[
           const SizedBox(height: 20),
           const SectionLabel('Load out'),
@@ -671,6 +780,136 @@ class _TotalRow extends StatelessWidget {
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.brand),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The stops the owner has taken off this run, with a way back.
+///
+/// On screen rather than tucked behind a count, because none of this is
+/// written until Confirm: leave the screen and the removals evaporate, and
+/// confirm it and they become permanent. A panel the owner can read is the
+/// only thing standing between those two outcomes.
+class _RemovedStops extends StatelessWidget {
+  const _RemovedStops({required this.removed, required this.onRestore});
+
+  final List<({RunStop stop, int index})> removed;
+  final void Function(String stopId) onRestore;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.hairline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            removed.length == 1
+                ? '1 stop removed from this run'
+                : '${removed.length} stops removed from this run',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+          const SizedBox(height: 2),
+          const Text(
+            'They stay on the uploaded sheet — confirming just leaves them off the route.',
+            style: TextStyle(fontSize: 11, color: AppColors.inkMuted),
+          ),
+          for (final entry in removed)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    entry.stop.customerName.isEmpty ? entry.stop.address : entry.stop.customerName,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => onRestore(entry.stop.id),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                  child: const Text('Undo'),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What a pin on the review map says when you tap it.
+///
+/// Deliberately not `StopInstructionsSheet`: that one edits
+/// `stop_instructions`, which is a durable per-address note, and this run is
+/// a draft the owner may be about to discard. Here the useful actions are
+/// read it and decide whether it belongs on the route at all.
+class _ReviewStopSheet extends StatelessWidget {
+  const _ReviewStopSheet({required this.stop, required this.position, required this.onRemove});
+
+  final RunStop stop;
+  final int position;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final instructions = stop.instructions?.trim();
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                StopPin(number: position, compact: true),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    stop.customerName.isEmpty ? stop.address : stop.customerName,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(stop.address, style: const TextStyle(fontSize: 13, color: AppColors.inkMuted)),
+            if (stop.itemsSummary.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(stop.itemsSummary, style: const TextStyle(fontSize: 13)),
+            ],
+            if (instructions != null && instructions.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const SectionLabel('Instructions'),
+              const SizedBox(height: 4),
+              Text(instructions, style: const TextStyle(fontSize: 13)),
+            ],
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    label: const Text('Remove from run'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

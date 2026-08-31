@@ -98,7 +98,8 @@ directly with `StreamBuilder`/`FutureBuilder`; there is no repository layer and 
 UploadRunSheetScreen   → PDF to InfraConfig.runSheetsBucket at {roundKey}/{uploadId}.pdf
 RunSheetProgressScreen → streams run_sheet_upload/{uploadId}.status
 RunSheetReviewScreen   → reads delivery_run/{runId}/delivery_stop (seq_order), map + drag-reorder
-                         + per-product load-out totals + editable route name;
+                         + tap-a-pin + remove-a-stop + per-product load-out totals
+                         + editable route name;
                          writes status (+ manual_order, route_name/route_name_source) back
 OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → RouteMapScreen;
                          long-press a card to rename (round/round_source) or delete
@@ -162,6 +163,17 @@ its own when the backend goes real. See plan.md's table before assuming a number
 - **`RouteName.maxLength` mirrors `firestore.rules`** (`size() <= 80`) the way `DepotLocator.addressKey`
   mirrors `firestore_paths.address_key`. Over-length names come back as a bare `permission-denied`, which
   reads as a sign-in failure, so they are caught client-side before the write.
+- **`manual_order` is "the stops this run keeps, in order" — a subset, not a permutation.** Removing a
+  stop on the review screen means leaving its id out of that list; `_apply_manual_order` in
+  `confirm_run_sheet_upload.py` marks the rest `excluded` (soft, like `removed_at` on a driver) and
+  `get_stops_by_run` filters them. It used to require an exact permutation and discard anything else
+  wholesale, which made removal unexpressible — the owner could see a duplicate row or a mangled
+  address and could only confirm it or discard the whole sheet. It is still sent **only** when the owner
+  actually edited something (`_stopsEdited`): an untouched review must not re-assert the pipeline's own
+  sequence as though a person had chosen it. Nothing is written until Confirm, so `_removed` is the only
+  record a removal happened — which is why the header panel shows it rather than a bare count, and why
+  `_resetOrder` deliberately leaves removals alone (its label says *order*).
+
 - **Reordering uses `onReorderItem`, not the deprecated `onReorder`.** It already compensates for the
   lifted item, so the classic `if (newIndex > oldIndex) newIndex -= 1` fixup must **not** be repeated.
 - A `RunStop` without coordinates is dropped at parse time (`RunStop.fromDoc` returns null) so no
