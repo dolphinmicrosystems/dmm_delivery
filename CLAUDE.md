@@ -149,6 +149,14 @@ its own when the backend goes real. See plan.md's table before assuming a number
   what stops next week's parsed "Run 2" reclaiming a renamed route, so a write that sets `round` without
   it silently reverts on the next upload. `circuits.pdf_round` is kept separately and is the *only* thing
   `round_mismatch` may compare against — comparing the display name flags every upload of a renamed route.
+- **`RunSheetProgressScreen` must never render a bare spinner.** Every way the pipeline can fail looks
+  the same from the client - the document just never reaches `ready_for_review` - so the screen checks
+  `snapshot.hasError` **before** `snapshot.data` (reading the data first turns a permission-denied into a
+  permanent spinner), treats a missing document as its own state, and runs a 90s stall timer restarted on
+  every status change. The timer is a hint, not a deadline: a function killed mid-stage writes no `error`
+  status because a timeout is not a catchable exception, and the Cloud Function's own limit is 300s, so
+  the stall message only ever *adds* a way out while the stream stays live. Nothing here is unit-tested -
+  the screen needs Firebase to construct - which is the usual reason to keep it this simple.
 - **Leaving a screen with unapplied edits is guarded, and only then.** `UploadRunSheetScreen` and
   `RunSheetReviewScreen` wrap their `Scaffold` in `PopScope` inside a `ValueListenableBuilder` on the name
   controller — `canPop` is a constructor argument, so it is only as fresh as the last build, and typing
