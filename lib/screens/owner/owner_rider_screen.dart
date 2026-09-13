@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../config/map_config.dart';
 import '../../models/rider_board_entry.dart';
 import '../../models/rider_map_data.dart';
 import '../../services/rider_board_api.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/basemap_attribution.dart';
 import '../../widgets/pill_badge.dart';
 
 /// owner-rider.html: one driver's route on the map, with a pulsing marker at
@@ -135,10 +137,11 @@ class _RiderMap extends StatelessWidget {
       ),
       children: [
         TileLayer(
-          // Same muted basemap RouteMapScreen uses - no API key, nothing
-          // billed per view, and it keeps the route line the only saturated
-          // thing on screen.
-          urlTemplate: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+          // Same muted basemap RouteMapScreen uses, from the same place, so a
+          // key added for one map is a key added for every map. It keeps the
+          // route line the only saturated thing on screen.
+          urlTemplate: MapConfig.basemapUrlTemplate,
+          subdomains: MapConfig.basemapSubdomains,
           userAgentPackageName: 'com.delivery.dmm_delivery',
           retinaMode: RetinaMode.isHighDensity(context),
         ),
@@ -183,6 +186,7 @@ class _RiderMap extends StatelessWidget {
               ),
           ],
         ),
+        const BasemapAttribution(),
       ],
     );
   }

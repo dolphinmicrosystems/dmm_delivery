@@ -27,9 +27,10 @@ yet") are deliberate and explained there.
 ## Commands
 
 - Install deps: `flutter pub get`
-- Run app: `flutter run`
+- Run app: `flutter run --dart-define=CARTO_API_KEY=<key>` (without the key the maps still work, but
+  every basemap tile is watermarked — see the CARTO note under Conventions)
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (134 tests, all passing)
+- Run all tests: `flutter test` (191 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -125,7 +126,8 @@ already fit to show a person.
 
 **Map data is data, never an image.** The server returns an encoded polyline (with `shape_format` — a
 precision-6 shape decoded as 5 lands ten degrees away, silently); the client owns the viewport and renders
-tiles/overlay/marker itself via `flutter_map` + CARTO basemap tiles.
+tiles/overlay/marker itself via `flutter_map` + CARTO basemap tiles (`MapConfig`, which every tile layer
+in the app reads — see the key note below).
 
 **Much of the board is mock, and labelled as such in the payload** (`demo_mode`, `route.source`,
 `position.source`). The UI's "Mock route & position" badge is driven by those fields, so it disappears on
@@ -135,6 +137,16 @@ its own when the backend goes real. See plan.md's table before assuming a number
 
 - **Never upload to the default Firebase Storage bucket.** Only `InfraConfig.runSheetsBucket` has the
   Storage trigger and the owner-only write rule bound to it; the default bucket silently never processes.
+- **CARTO basemaps need an API key, and say so in ink rather than in an error.** Since August 2026 an
+  unkeyed tile request still returns HTTP 200 and a valid PNG — with "API KEY REQUIRED" printed across
+  the middle. No exception, no failed request, nothing for a tile layer to report: the only symptom is a
+  screenshot. The key is free from `carto.com/basemaps/apikey`, arrives by email with no account, and
+  rides as `?key=` (**not** `?api_key=`, which is silently ignored). It lives in `MapConfig` behind
+  `--dart-define=CARTO_API_KEY`, never hardcoded, and `cloudbuild.yaml` passes it as `_CARTO_API_KEY`.
+  `MapConfig.basemapUrlFor` exists so both branches are testable — `cartoApiKey` is a compile-time
+  constant, so a test of the getter only ever sees the branch the test run was built with. CARTO's terms
+  require the CARTO + OpenStreetMap credit `BasemapAttribution` renders on every map; they are also
+  retiring raster PNG basemaps in favour of vector, so this is a stopgap with a shelf life.
 - **`DepotLocator.addressKey` mirrors the backend's `firestore_paths.address_key`** (sha256 of the
   trimmed, lowercased address). The two are a contract — change one and you must change the other.
 - **A re-upload is an amendment, not a redo**, and the client's copy promises that. Re-uploading a sheet
@@ -279,6 +291,12 @@ Owner screens.
 
 `RoutePreviewMap` is deliberately shared between the pre-confirm review screen and `RouteMapScreen`: the
 sequence an owner approves and the one they look up later must be the same picture, depot legs included.
+
+Tapping a stop in either screen's list calls its pin out on that shared map — `StopHighlight` carries the
+`RunStop.id` (never an index, which a drag would invalidate) plus a tick, because tapping the same card
+twice has to blink twice or the second tap reads as not registering. The pin pulses three times, is drawn
+above every other marker including the depot, and stays filled afterwards; the map only pans when the pin
+is off screen, for the same reason `initialCameraFit` never re-fits.
 
 The `Inter` variable font is registered once in `pubspec.yaml` at several weights pointing at the same
 file; select weights via `TextStyle(fontWeight: ...)`, not separate family names.

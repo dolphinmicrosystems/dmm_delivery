@@ -170,6 +170,59 @@ void main() {
       expect(points.length, stops.length);
       expect(points.first, stops.first.location);
     });
+
+    /// Pumps the map with one stop called out and lets the pulse finish, so
+    /// no ticker is left running when the test ends.
+    Future<void> pumpHighlighted(WidgetTester tester, StopHighlight? highlight) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 400,
+              child: RoutePreviewMap(stops: stops, depot: depot, highlight: highlight),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+    }
+
+    testWidgets('fills the called-out pin, and only that one', (tester) async {
+      await pumpHighlighted(tester, StopHighlight.after(null, 'b'));
+
+      final selected = tester.widgetList<StopPin>(find.byType(StopPin)).where((pin) => pin.selected);
+      expect(selected.map((pin) => pin.number), [2]);
+    });
+
+    testWidgets('draws the called-out pin last, so a cluster cannot bury it', (tester) async {
+      // Above the depot marker too, which otherwise wins: at DMM the depot is
+      // itself a delivery address, so the stop the owner just asked about can
+      // be sitting directly underneath it.
+      await pumpHighlighted(tester, StopHighlight.after(null, 'b'));
+
+      final markers = tester.widget<MarkerLayer>(find.byType(MarkerLayer)).markers;
+      expect(markers.last.point, stops[1].location);
+      expect(markers.map((m) => m.point), containsAll([depot, ...stops.map((s) => s.location)]));
+    });
+
+    testWidgets('leaves every pin alone when nothing is called out', (tester) async {
+      await pumpHighlighted(tester, null);
+
+      expect(tester.widgetList<StopPin>(find.byType(StopPin)).every((pin) => !pin.selected), isTrue);
+    });
+
+    test('tapping the same stop twice asks for a second blink', () {
+      // Identity alone would not: somebody who looked away and missed the
+      // first pulse taps the same card again, and an animation keyed on the
+      // stop id would sit still, which reads as the tap not registering.
+      final first = StopHighlight.after(null, 'b');
+      final again = StopHighlight.after(first, 'b');
+
+      expect(again.stopId, 'b');
+      expect(again.tick, greaterThan(first.tick));
+    });
   });
 
   group('reordering', _reorderTests);

@@ -27,6 +27,12 @@
 substitutions:
   _GCP_PROJECT_ID: "" # required - target environment's GCP/Firebase project id
   _GCLOUD_ACCOUNT: "" # optional - defaults to this trigger's own service account
+  # Optional, but a release built without it ships maps with "API KEY
+  # REQUIRED" printed across every tile - CARTO stopped serving unkeyed
+  # basemaps in August 2026 and answers with a watermarked PNG rather than an
+  # error, so nothing in the build or the app can notice. See MapConfig.
+  _CARTO_API_KEY: ""
+
 
 steps:
   - id: require-target-project
@@ -68,7 +74,7 @@ steps:
   - id: flutter-build
     name: ghcr.io/cirruslabs/flutter:stable
     entrypoint: flutter
-    args: ["build", "appbundle", "--release"]
+    args: ["build", "appbundle", "--release", "--dart-define=CARTO_API_KEY=$_CARTO_API_KEY"]
     waitFor: ["flutter-analyze"]
 
 options:

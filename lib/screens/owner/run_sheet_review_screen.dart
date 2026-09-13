@@ -60,6 +60,11 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
 
   List<RunStop> _stops = const [];
 
+  /// Which stop the map is calling out, set by tapping its card in the list.
+  /// Null until the owner asks - the map opens showing the whole run, not one
+  /// stop out of it.
+  StopHighlight? _highlight;
+
   /// The order the backend sequenced, kept so the owner can back out of
   /// their edits without re-uploading the sheet.
   List<RunStop> _optimizedOrder = const [];
@@ -418,6 +423,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
                 child: RoutePreviewMap(
                   stops: _stops,
                   depot: _depot,
+                  highlight: _highlight,
                   // The pins were dead on this screen while the confirmed
                   // route screen's were tappable - backwards, since this is
                   // the one screen where an owner is actively checking
@@ -469,7 +475,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         // Two ways to pick a card up, because one is discoverable and the
         // other is fast: a long press anywhere (the gesture people try
         // first on a list of cards) or the handle, which drags instantly.
-        // The card has no tap action, so long-press-to-drag costs nothing.
+        // A tap is a third, shorter gesture and does not collide with either.
         //
         // The reorder key must sit on the widget the builder *returns* -
         // nesting it inside throws "Every item of ReorderableListView must
@@ -479,27 +485,36 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
           index: index,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: StopCard(
-              stop: stop,
-              position: index + 1,
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    onPressed: _submitting ? null : () => _removeStop(index),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    color: AppColors.inkMuted,
-                    tooltip: 'Remove this stop',
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  ReorderableDragStartListener(
-                    index: index,
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                      child: Icon(Icons.drag_indicator_rounded, color: AppColors.inkMuted),
+            child: GestureDetector(
+              // Scrolling a long run and asking "where is this one?" is the
+              // question this list cannot answer on its own - an address in
+              // Dunedin means nothing to somebody who has not driven it.
+              // Tapping the card pulses its pin, which is the cheapest
+              // possible answer and costs the card no other gesture.
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _highlight = StopHighlight.after(_highlight, stop.id)),
+              child: StopCard(
+                stop: stop,
+                position: index + 1,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: _submitting ? null : () => _removeStop(index),
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      color: AppColors.inkMuted,
+                      tooltip: 'Remove this stop',
+                      visualDensity: VisualDensity.compact,
                     ),
-                  ),
-                ],
+                    ReorderableDragStartListener(
+                      index: index,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                        child: Icon(Icons.drag_indicator_rounded, color: AppColors.inkMuted),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

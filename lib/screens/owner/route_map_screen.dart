@@ -33,6 +33,9 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
   String? _depotAddress;
   Future<LatLng?>? _depotFuture;
 
+  /// Which stop the map is calling out, set by tapping its row in the sheet.
+  StopHighlight? _highlight;
+
   Future<LatLng?> _depot(String? address) {
     if (address != _depotAddress || _depotFuture == null) {
       _depotAddress = address;
@@ -87,6 +90,7 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                         child: RoutePreviewMap(
                           stops: stops,
                           depot: depotSnap.data,
+                          highlight: _highlight,
                           onStopTap: (index) => _showStop(context, stopDocsById[stops[index].id]),
                         ),
                       ),
@@ -109,7 +113,17 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                               return _StopRow(
                                 stop: stop,
                                 position: index,
-                                onTap: () => _showStop(context, stopDocsById[stop.id]),
+                                // Two answers to one tap, because the row
+                                // raises two questions at once: the sheet
+                                // says what to drop here, and the pulse says
+                                // where "here" is. The sheet covers most of
+                                // the map while it is open, which is why the
+                                // pin stays filled once the pulse is over -
+                                // the answer has to survive the dismissal.
+                                onTap: () {
+                                  setState(() => _highlight = StopHighlight.after(_highlight, stop.id));
+                                  _showStop(context, stopDocsById[stop.id]);
+                                },
                               );
                             },
                           ),
