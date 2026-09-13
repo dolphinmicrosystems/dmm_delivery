@@ -86,6 +86,9 @@ class DriverInvitation {
     this.expiresAt,
     this.acceptedAt,
     this.removedAt,
+    this.inviteCount14d,
+    this.firstInviteInWindowAt,
+    this.inviteNumberLifetime,
   });
 
   /// Lowercased invited address, which is also the document id.
@@ -109,6 +112,15 @@ class DriverInvitation {
   final DateTime? invitedAt;
   final DateTime? expiresAt;
   final DateTime? acceptedAt;
+
+  /// Rate-limit counters, written by the `backfill_invite_counters` Cloud
+  /// Function after a successful client write. The Security Rules require
+  /// them to be present (firestore.rules `isInvite()`); the Flutter app reads
+  /// them to gate the "Resend" button so a tap during the 1-day spacing
+  /// window never reaches Firestore. See docs/techdesign.md.
+  final int? inviteCount14d;
+  final DateTime? firstInviteInWindowAt;
+  final int? inviteNumberLifetime;
 
   /// When the owner switched this person off, or null while they work here.
   ///
@@ -155,7 +167,38 @@ class DriverInvitation {
   /// `accepted_at` back to null - they would keep their role claim and keep
   /// driving while the owner's list said they had never signed in. The rules
   /// block it too; this stops the app offering a button that always fails.
-  bool get canResend => status != InvitationStatus.accepted && status != InvitationStatus.removed;
+  bool get canResend {
+    if (status == InvitationStatus.accepted || status == InvitationStatus.removed) {
+      return false;
+    }
+    final invited = invitedAt;
+    if (invited != null && !_canResendBySpacing(invited)) return false;
+    final count = inviteCount14d;
+    if (count != null && count >= 14) return false;
+    return true;
+  }
+
+  /// When the next resend becomes available, or null if it is available now.
+  /// Drives the greyed-out button label ("Resend in 7h").
+  DateTime? get resendAvailableAt {
+    if (status == InvitationStatus.accepted || status == InvitationStatus.removed) {
+      return null;
+    }
+    final invited = invitedAt;
+    if (invited != null) {
+      final next = invited.add(const Duration(days: 1));
+      if (next.isAfter(now)) return next;
+    }
+    if (inviteCount14d != null && inviteCount14d! >= 14) {
+      final windowEnd = firstInviteInWindowAt?.add(const Duration(days: 14));
+      return windowEnd?.add(const Duration(days: 1));
+    }
+    return null;
+  }
+
+  bool _canResendBySpacing(DateTime lastInvite) {
+    return now.difference(lastInvite) >= const Duration(days: 1);
+  }
 
   /// Renaming works in every state, including accepted - it is display text,
   /// and it travels as its own narrow write for exactly that reason.
@@ -252,6 +295,13 @@ class DriverInvitation {
       expiresAt: (data['expires_at'] as Timestamp?)?.toDate(),
       acceptedAt: (data['accepted_at'] as Timestamp?)?.toDate(),
       removedAt: (data['removed_at'] as Timestamp?)?.toDate(),
+      // Counters are optional in older docs that predate the rate-limit
+      // policy; null means "no information" and `canResend` treats null
+      // counts as the most permissive value so an unsynced doc never
+      // locks the owner out.
+      inviteCount14d: (data['invite_count_14d'] as num?)?.toInt(),
+      firstInviteInWindowAt: (data['first_invite_in_window_at'] as Timestamp?)?.toDate(),
+      inviteNumberLifetime: (data['invite_number_lifetime'] as num?)?.toInt(),
     );
   }
 

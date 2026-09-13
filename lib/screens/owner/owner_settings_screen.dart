@@ -555,8 +555,17 @@ class _DriverRowState extends State<_DriverRow> {
                         // A resend aimed at an accepted driver would write their
                         // acceptance back to null. The rules refuse it; disabling
                         // it here stops the app offering a button that can't work.
+                        //
+                        // The rate-limit policy layers two more refusals on top:
+                        // at least 1 day between consecutive invites, and at most
+                        // 14 in any rolling 14-day window. When disabled for one of
+                        // those reasons, show when the next resend is available.
                         enabled: _invitation.canResend,
-                        child: const Text('Resend invite'),
+                        child: Text(
+                          _invitation.resendAvailableAt != null
+                              ? 'Resend invite (${_resendCountdown(_invitation.resendAvailableAt!)})'
+                              : 'Resend invite',
+                        ),
                       ),
                       const PopupMenuItem(value: _DriverAction.remove, child: Text('Remove')),
                     ],
@@ -599,6 +608,17 @@ class _DriverRowState extends State<_DriverRow> {
       ),
       success: 'Invite resent — valid for ${InvitationTtl.label(ttlDays)}.',
     );
+  }
+
+  /// Human-readable countdown for the "Resend invite (in 7h)" subtitle.
+  /// Mirrors the day/hour grain the rest of this screen uses; sub-hour
+  /// precision would change between page loads and read as flicker.
+  String _resendCountdown(DateTime when) {
+    final delta = when.difference(_invitation.now);
+    if (delta.isNegative) return 'now';
+    if (delta.inHours >= 24) return 'in ${delta.inDays}d';
+    if (delta.inHours >= 1) return 'in ${delta.inHours}h';
+    return 'in <1h';
   }
 
   Future<void> _remove() async {

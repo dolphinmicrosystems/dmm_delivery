@@ -66,6 +66,15 @@ class DriverInviter {
       'role': role.wire,
       'driver_name': ?name,
       if (name != null) 'driver_name_source': 'owner',
+      // The three rate-limit counter fields (invite_count_14d,
+      // first_invite_in_window_at, invite_number_lifetime) are intentionally
+      // NOT written here. They are stamped by the `backfill_invite_counters`
+      // Cloud Function inside a transaction after this write succeeds; doing
+      // them client-side opens a race when two owners invite the same email
+      // at the same time. firestore.rules requires the counters to be present
+      // and within bounds, so the function must finish before any subsequent
+      // write to the same doc.
+      'removed_at': null,
     });
 
     AppLog.owner('invite written', {'ttlDays': ttlDays, 'role': role.wire});
