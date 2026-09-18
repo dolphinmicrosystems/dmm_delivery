@@ -32,6 +32,12 @@ substitutions:
   # basemaps in August 2026 and answers with a watermarked PNG rather than an
   # error, so nothing in the build or the app can notice. See MapConfig.
   _CARTO_API_KEY: ""
+  # Optional. Without it the Detailed and Satellite map styles are not
+  # offered and every map uses the Simple CARTO basemap. From the backend
+  # repo: terraform output -raw map_tiles_app_key. A release keystore's SHA-1
+  # must also be added to that key's Android restriction (maps.tf) and passed
+  # as GOOGLE_MAP_TILES_ANDROID_CERT, or Google rejects the release's requests.
+  _GOOGLE_MAP_TILES_KEY: ""
 
 
 steps:
@@ -74,7 +80,7 @@ steps:
   - id: flutter-build
     name: ghcr.io/cirruslabs/flutter:stable
     entrypoint: flutter
-    args: ["build", "appbundle", "--release", "--dart-define=CARTO_API_KEY=$_CARTO_API_KEY"]
+    args: ["build", "appbundle", "--release", "--dart-define=CARTO_API_KEY=$_CARTO_API_KEY", "--dart-define=GOOGLE_MAP_TILES_KEY=$_GOOGLE_MAP_TILES_KEY"]
     waitFor: ["flutter-analyze"]
 
 options:

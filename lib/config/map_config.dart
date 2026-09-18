@@ -46,6 +46,33 @@ class MapConfig {
 
   static const basemapSubdomains = ['a', 'b', 'c', 'd'];
 
+  /// Key for Google's Map Tiles API: the Detailed (road map with businesses,
+  /// buildings and house numbers) and Satellite styles. Created by the backend
+  /// repo's Terraform (`terraform output -raw map_tiles_app_key`) and passed
+  /// like the CARTO key:
+  ///
+  ///     flutter run --dart-define-from-file=dart_defines.json
+  ///
+  /// Empty means those two styles are simply not offered - the Simple CARTO
+  /// map still works. Restricted by Google to this app's package and signing
+  /// certificate, and to the Map Tiles API, so a copy lifted out of the APK
+  /// is useless elsewhere; that restriction is why every request carries the
+  /// two headers below.
+  static const googleMapTilesKey = String.fromEnvironment('GOOGLE_MAP_TILES_KEY');
+
+  /// Sent with every Map Tiles request so Google can match them against the
+  /// key's Android app restriction. The certificate is the SHA-1 of
+  /// android/app/dmm_delivery_debug.keystore; a release keystore needs its own
+  /// SHA-1 added to the key (maps.tf in the backend repo) and passed here as
+  /// GOOGLE_MAP_TILES_ANDROID_CERT.
+  static const googleMapTilesHeaders = {
+    'X-Android-Package': 'com.delivery.dmm_delivery',
+    'X-Android-Cert': String.fromEnvironment(
+      'GOOGLE_MAP_TILES_ANDROID_CERT',
+      defaultValue: '0BD36AB39F2CE9A8204CF86266049E6B68E969ED',
+    ),
+  };
+
   /// Required by CARTO's terms ("CARTO and OpenStreetMap must be credited on
   /// every map"), and by OpenStreetMap's before that. Rendered through
   /// flutter_map's attribution widget rather than baked into a corner of the

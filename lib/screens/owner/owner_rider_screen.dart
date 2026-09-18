@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../config/map_config.dart';
 import '../../models/rider_board_entry.dart';
 import '../../models/rider_map_data.dart';
 import '../../services/rider_board_api.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/basemap.dart';
 import '../../widgets/basemap_attribution.dart';
 import '../../widgets/pill_badge.dart';
 
@@ -136,15 +136,8 @@ class _RiderMap extends StatelessWidget {
         interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
       ),
       children: [
-        TileLayer(
-          // Same muted basemap RouteMapScreen uses, from the same place, so a
-          // key added for one map is a key added for every map. It keeps the
-          // route line the only saturated thing on screen.
-          urlTemplate: MapConfig.basemapUrlTemplate,
-          subdomains: MapConfig.basemapSubdomains,
-          userAgentPackageName: 'com.delivery.dmm_delivery',
-          retinaMode: RetinaMode.isHighDensity(context),
-        ),
+        // The same basemap, in the same style, as every other map in the app.
+        const BasemapLayer(),
         if (data.route.length > 1)
           PolylineLayer(
             polylines: [
@@ -187,6 +180,11 @@ class _RiderMap extends StatelessWidget {
           ],
         ),
         const BasemapAttribution(),
+        // The one map control this screen needs: the route is fitted for it.
+        const Align(
+          alignment: Alignment.topRight,
+          child: Padding(padding: EdgeInsets.all(10), child: MapStyleButton()),
+        ),
       ],
     );
   }

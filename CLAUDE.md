@@ -323,6 +323,29 @@ drawn straight until confirm redraws them. Don't reuse the decoder for the rider
 precision 6. Time estimates merge `{...roadLegs.seconds, ...learnedLegs}`, the same precedence as the
 backend. The route screen reads just the times with `roadSecondsFromRun`, which skips decoding the shapes.
 
+**Basemaps come in three styles** (`MapStyle`, one app-wide `ValueNotifier`, picked with `MapStyleButton` in
+the map controls):
+- **Simple:** CARTO Positron.
+- **Detailed:** Google road map, with businesses, buildings and house numbers.
+- **Satellite:** Google imagery with road labels.
+
+Every map draws `BasemapLayer` + `BasemapAttribution` (`lib/widgets/basemap*.dart`); never a hand-rolled
+`TileLayer`. The Google styles use the Map Tiles API (`GoogleMapTiles`), which requires a session per style
+(cached until an hour before expiry) and a key in `GOOGLE_MAP_TILES_KEY`. Without that key only Simple is
+offered.
+
+The key is Android-restricted: every request sends `X-Android-Package`/`X-Android-Cert`
+(`MapConfig.googleMapTilesHeaders`, the committed debug keystore's SHA-1). A release keystore needs its SHA-1
+added in the backend's `maps.tf` *and* passed as `GOOGLE_MAP_TILES_ANDROID_CERT`.
+
+Google's terms shape the code:
+- **No caching:** these tile layers use `DisabledMapCachingProvider`, because flutter_map caches to disk
+  by default.
+- **Attribution:** the Google Maps logo (official assets in `assets/google_maps/`) plus the per-viewport
+  copyright line, never covered. That's why `RouteMapScreen` puts the credits at the top
+  (`attributionAtTop`), where its stop sheet can't cover them.
+- **Fallback:** a Google style that fails to start falls back to Simple rather than a blank map.
+
 `RoutePreviewMap` draws its own controls (zoom in/out, show whole route, and enlarge when the host passes
 `onToggleExpanded` — only the review screen does). Pins come in three tiers by zoom (`_PinTier`): dots
 below 13, compact numbered badges below 14.5, full pins above. A whole round fits at about zoom 12, where

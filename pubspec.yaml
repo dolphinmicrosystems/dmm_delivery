@@ -71,6 +71,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # The Google Maps logo, required on any map showing Google's tiles (Map
+  # Tiles API policies). From Google's official attribution pack; 2.0x/4.0x
+  # variants are picked by screen density.
+  assets:
+    - assets/google_maps/
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

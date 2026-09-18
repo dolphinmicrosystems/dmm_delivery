@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../config/map_config.dart';
 import '../models/delivery_estimate.dart';
 import '../models/road_legs.dart';
 import '../models/run_stop.dart';
 import '../theme/app_colors.dart';
+import 'basemap.dart';
 import 'basemap_attribution.dart';
 
 /// Which stop the map is calling out, and how many times it has been asked to.
@@ -56,6 +56,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.roadLegs = const RoadLegs(),
     this.expanded = false,
     this.onToggleExpanded,
+    this.attributionAtTop = false,
   });
 
   final List<RunStop> stops;
@@ -85,6 +86,10 @@ class RoutePreviewMap extends StatefulWidget {
   /// too small to check a pin against its street; the full-screen route map
   /// has nothing to expand into and leaves this null.
   final VoidCallback? onToggleExpanded;
+
+  /// Moves the map credits to the top, for a host that pulls a sheet up over
+  /// the map's lower edge - see [BasemapAttribution.atTop].
+  final bool attributionAtTop;
 
   @override
   State<RoutePreviewMap> createState() => _RoutePreviewMapState();
@@ -277,18 +282,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
         onPositionChanged: (camera, _) => _syncTier(camera.zoom),
       ),
       children: [
-        TileLayer(
-          // Template and key both come from MapConfig - an unkeyed CARTO tile
-          // still returns a perfectly valid PNG with "API KEY REQUIRED"
-          // printed across it, so there is no failure here to notice.
-          urlTemplate: MapConfig.basemapUrlTemplate,
-          subdomains: MapConfig.basemapSubdomains,
-          userAgentPackageName: 'com.delivery.dmm_delivery',
-          // Fills the template's `{r}` with "@2x" on a high-density screen,
-          // which is every phone this runs on. Left off, CARTO serves 256px
-          // tiles stretched to twice their size and street names go soft.
-          retinaMode: RetinaMode.isHighDensity(context),
-        ),
+        const BasemapLayer(),
         PolylineLayer(
           polylines: [
             Polyline(
@@ -330,7 +324,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
           expanded: widget.expanded,
           onToggleExpanded: widget.onToggleExpanded,
         ),
-        const BasemapAttribution(),
+        BasemapAttribution(atTop: widget.attributionAtTop),
       ],
     );
   }
@@ -392,6 +386,8 @@ class _MapControls extends StatelessWidget {
                 _ControlButton(icon: Icons.fit_screen_rounded, tooltip: 'Show whole route', onPressed: onFitAll),
               ],
             ),
+            const SizedBox(height: 8),
+            const MapStyleButton(),
           ],
         ),
       ),

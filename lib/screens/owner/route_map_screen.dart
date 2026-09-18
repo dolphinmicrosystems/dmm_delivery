@@ -135,6 +135,8 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                             depot: depotSnap.data,
                             highlight: _highlight,
                             roadLegs: roadSnap.data ?? const RoadLegs(),
+                            // The stop sheet covers the map's lower edge.
+                            attributionAtTop: true,
                             onStopTap: (index) => _showStop(context, stopDocsById[stops[index].id]),
                           ),
                         ),
