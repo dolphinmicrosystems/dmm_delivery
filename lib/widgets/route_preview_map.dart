@@ -3,6 +3,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/map_config.dart';
+import '../models/delivery_estimate.dart';
+import '../models/road_legs.dart';
 import '../models/run_stop.dart';
 import '../theme/app_colors.dart';
 import 'basemap_attribution.dart';
@@ -39,12 +41,11 @@ class StopHighlight {
 /// review screen's drag-to-reorder redraw for free - reordering the list
 /// rebuilds this widget with a new order and the polyline follows.
 ///
-/// The line is straight segments between stops, not road geometry: the
-/// backend's Routes API call requests `optimizedIntermediateWaypointIndex`
-/// only, so an order is all that comes back. That is honest for a sequence
-/// review (the question here is "which stop next?", not "which street?"),
-/// and turns into real geometry the moment the backend also returns a
-/// polyline - only this file changes.
+/// The line follows the roads wherever the run has a road shape for a leg
+/// ([roadLegs], from the backend's Routes API call), and is a straight segment
+/// only where it does not: a run from before road paths existed, a Routes API
+/// outage, or a leg the owner has just created by dragging a stop, which the
+/// backend redraws once the order is confirmed.
 class RoutePreviewMap extends StatefulWidget {
   const RoutePreviewMap({
     super.key,
@@ -52,6 +53,9 @@ class RoutePreviewMap extends StatefulWidget {
     this.depot,
     this.onStopTap,
     this.highlight,
+    this.roadLegs = const RoadLegs(),
+    this.expanded = false,
+    this.onToggleExpanded,
   });
 
   final List<RunStop> stops;
@@ -68,12 +72,49 @@ class RoutePreviewMap extends StatefulWidget {
   /// brings an off-screen pin into view.
   final StopHighlight? highlight;
 
+  /// Road shapes per leg, keyed by address pair. Legs missing from it are
+  /// drawn straight.
+  final RoadLegs roadLegs;
+
+  /// Whether the host is currently showing this map at its larger size. Only
+  /// read to pick the expand/collapse icon - the host owns the size.
+  final bool expanded;
+
+  /// Shows an expand/collapse button among the map controls when set. The
+  /// review screen docks the map in a 240px strip above a long list, which is
+  /// too small to check a pin against its street; the full-screen route map
+  /// has nothing to expand into and leaves this null.
+  final VoidCallback? onToggleExpanded;
+
   @override
   State<RoutePreviewMap> createState() => _RoutePreviewMapState();
 }
 
+/// How much of a stop pin to draw at the current zoom.
+///
+/// A whole Dunedin round fitted onto a phone lands around zoom 12, where the
+/// full numbered pins are bigger than the streets between them: a dozen stops
+/// on Orari and Strathallan Streets pile into one unreadable stack. So the
+/// pins shrink with the map and only earn their numbers once there is room to
+/// read them - the list beside the map carries the numbers in the meantime.
+enum _PinTier {
+  dot,
+  compact,
+  full;
+
+  static _PinTier forZoom(double zoom) => zoom < 13 ? dot : (zoom < 14.5 ? compact : full);
+}
+
 class _RoutePreviewMapState extends State<RoutePreviewMap> {
+  static const _minZoom = 5.0;
+  static const _maxZoom = 19.0;
+
   final _controller = MapController();
+
+  /// Only the tier is state, not the zoom: `onPositionChanged` fires on every
+  /// frame of a pinch, and rebuilding every marker 60 times a second to draw
+  /// the same pins would make the gesture stutter.
+  _PinTier _tier = _PinTier.full;
 
   @override
   void dispose() {
@@ -112,29 +153,91 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
     }
   }
 
-  List<LatLng> get _linePoints => [
-    ?widget.depot,
-    for (final stop in widget.stops) stop.location,
-    // Closes the loop. The van goes home; a route drawn as an open path
-    // ending at the last customer understates the run by a leg, which is
-    // exactly the leg the depot address is configured to account for.
-    ?widget.depot,
-  ];
+  void _syncTier(double zoom) {
+    final tier = _PinTier.forZoom(zoom);
+    if (tier != _tier) setState(() => _tier = tier);
+  }
+
+  CameraFit get _fitAll => CameraFit.bounds(
+    bounds: LatLngBounds.fromPoints(_linePoints),
+    // Wider on the right, where the zoom controls sit over the map.
+    padding: const EdgeInsets.fromLTRB(40, 40, 64, 40),
+    // A run whose stops all share one address would otherwise fit to the
+    // deepest zoom the map allows, which reads as a blank map.
+    maxZoom: 17,
+  );
+
+  void _zoomBy(double delta) {
+    final camera = _controller.camera;
+    _controller.move(camera.center, (camera.zoom + delta).clamp(_minZoom, _maxZoom));
+  }
+
+  List<LatLng> get _linePoints {
+    final depot = widget.depot;
+    final nodes = <(String?, LatLng)>[
+      if (depot != null) (DeliveryEstimate.depotKey, depot),
+      for (final stop in widget.stops) (stop.addressKey, stop.location),
+      // Closes the loop. The van goes home; a route drawn as an open path
+      // ending at the last customer understates the run by a leg, which is
+      // exactly the leg the depot address is configured to account for.
+      if (depot != null) (DeliveryEstimate.depotKey, depot),
+    ];
+    if (nodes.isEmpty) return const [];
+
+    final line = <LatLng>[nodes.first.$2];
+    for (var i = 0; i + 1 < nodes.length; i++) {
+      final (fromKey, _) = nodes[i];
+      final (toKey, to) = nodes[i + 1];
+      final shape = fromKey == null || toKey == null
+          ? null
+          : widget.roadLegs.shapes[DeliveryEstimate.legKey(fromKey, toKey)];
+      // The road shape starts and ends where the road passes the stop, a few
+      // metres from its pin - close enough that joining them reads as the
+      // van pulling in, not as a gap.
+      if (shape != null) {
+        line.addAll(shape);
+      } else {
+        line.add(to);
+      }
+    }
+    return line;
+  }
 
   Marker _stopMarker(int index) {
     final stop = widget.stops[index];
     final highlight = widget.highlight;
     final isHighlighted = highlight != null && highlight.stopId == stop.id;
+    final onTap = widget.onStopTap == null ? null : () => widget.onStopTap!(index);
+    // The stop the owner asked about is drawn in full whatever the zoom - a
+    // pulsing dot is not an answer to "which one is this?".
+    if (isHighlighted || _tier == _PinTier.full) {
+      return Marker(
+        point: stop.location,
+        width: 36,
+        height: 44,
+        alignment: Alignment.topCenter,
+        child: GestureDetector(
+          onTap: onTap,
+          child: isHighlighted
+              ? _PulsingPin(number: index + 1, tick: highlight.tick)
+              : StopPin(number: index + 1),
+        ),
+      );
+    }
+    // Compact pins and dots sit centred on the stop: without the full pin's
+    // tail there is no tip to stand on it.
+    final compact = _tier == _PinTier.compact;
     return Marker(
       point: stop.location,
-      width: 36,
-      height: 44,
-      alignment: Alignment.topCenter,
+      width: compact ? 28 : 22,
+      height: compact ? 28 : 22,
       child: GestureDetector(
-        onTap: widget.onStopTap == null ? null : () => widget.onStopTap!(index),
-        child: isHighlighted
-            ? _PulsingPin(number: index + 1, tick: highlight.tick)
-            : StopPin(number: index + 1),
+        onTap: onTap,
+        // The hit box is the whole marker rather than the 12px dot inside it,
+        // so a tap on a zoomed-out map does not need a fingertip placed to the
+        // pixel.
+        behavior: HitTestBehavior.opaque,
+        child: Center(child: compact ? StopPin(number: index + 1, compact: true) : const _StopDot()),
       ),
     );
   }
@@ -158,11 +261,20 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
       options: MapOptions(
         // Fits the whole run on first paint. Deliberately `initial` only:
         // re-fitting on every reorder would yank the viewport out from under
-        // an owner who has zoomed in to check one cluster of stops.
-        initialCameraFit: CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(48),
-        ),
+        // an owner who has zoomed in to check one cluster of stops. The
+        // "Show whole route" control is how they ask for it back.
+        initialCameraFit: _fitAll,
+        minZoom: _minZoom,
+        maxZoom: _maxZoom,
+        // Rotation is off: a map knocked a few degrees askew by a two-finger
+        // pinch has no compass to put it right, and north-up is how every
+        // owner reads Dunedin.
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+        // The initial fit does not reliably report itself through
+        // onPositionChanged, and a round fitted at zoom 12 must not open on
+        // full-size pins just because that is the tier's starting value.
+        onMapReady: () => _syncTier(_controller.camera.zoom),
+        onPositionChanged: (camera, _) => _syncTier(camera.zoom),
       ),
       children: [
         TileLayer(
@@ -172,9 +284,25 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
           urlTemplate: MapConfig.basemapUrlTemplate,
           subdomains: MapConfig.basemapSubdomains,
           userAgentPackageName: 'com.delivery.dmm_delivery',
+          // Fills the template's `{r}` with "@2x" on a high-density screen,
+          // which is every phone this runs on. Left off, CARTO serves 256px
+          // tiles stretched to twice their size and street names go soft.
+          retinaMode: RetinaMode.isHighDensity(context),
         ),
         PolylineLayer(
-          polylines: [Polyline(points: points, color: AppColors.brand, strokeWidth: 4)],
+          polylines: [
+            Polyline(
+              points: points,
+              color: AppColors.brand,
+              strokeWidth: 4,
+              // A white casing lifts the line off the basemap's own roads,
+              // the same pale grey a thin blue line otherwise sinks into.
+              borderColor: Colors.white,
+              borderStrokeWidth: 2,
+              strokeCap: StrokeCap.round,
+              strokeJoin: StrokeJoin.round,
+            ),
+          ],
         ),
         MarkerLayer(
           markers: [
@@ -195,8 +323,135 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
               if (widget.stops[i].id == highlightedId) _stopMarker(i),
           ],
         ),
+        _MapControls(
+          onZoomIn: () => _zoomBy(1),
+          onZoomOut: () => _zoomBy(-1),
+          onFitAll: () => _controller.fitCamera(_fitAll),
+          expanded: widget.expanded,
+          onToggleExpanded: widget.onToggleExpanded,
+        ),
         const BasemapAttribution(),
       ],
+    );
+  }
+}
+
+/// Zoom in, zoom out, back to the whole run - and enlarge, where the host
+/// allows it.
+///
+/// Pinch and double-tap already zoom, but neither is discoverable, and on an
+/// emulator a pinch is a Ctrl-drag nobody guesses. Buttons are the part of a
+/// map everyone already knows how to use.
+class _MapControls extends StatelessWidget {
+  const _MapControls({
+    required this.onZoomIn,
+    required this.onZoomOut,
+    required this.onFitAll,
+    required this.expanded,
+    this.onToggleExpanded,
+  });
+
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+  final VoidCallback onFitAll;
+  final bool expanded;
+  final VoidCallback? onToggleExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final onToggleExpanded = this.onToggleExpanded;
+    return Align(
+      alignment: Alignment.topRight,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onToggleExpanded != null) ...[
+              _ControlGroup(
+                children: [
+                  _ControlButton(
+                    icon: expanded ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
+                    tooltip: expanded ? 'Shrink map' : 'Enlarge map',
+                    onPressed: onToggleExpanded,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            _ControlGroup(
+              children: [
+                _ControlButton(icon: Icons.add_rounded, tooltip: 'Zoom in', onPressed: onZoomIn),
+                const Divider(height: 1, thickness: 1, color: AppColors.hairline),
+                _ControlButton(icon: Icons.remove_rounded, tooltip: 'Zoom out', onPressed: onZoomOut),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _ControlGroup(
+              children: [
+                _ControlButton(icon: Icons.fit_screen_rounded, tooltip: 'Show whole route', onPressed: onFitAll),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ControlGroup extends StatelessWidget {
+  const _ControlGroup({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 3,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(10),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(width: 38, child: Column(mainAxisSize: MainAxisSize.min, children: children)),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  const _ControlButton({required this.icon, required this.tooltip, required this.onPressed});
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onPressed,
+        child: SizedBox(width: 38, height: 38, child: Icon(icon, size: 20, color: AppColors.ink)),
+      ),
+    );
+  }
+}
+
+/// A stop on a zoomed-out map: position only. The number comes back once the
+/// map is close enough for numbers to be told apart - see [_PinTier].
+class _StopDot extends StatelessWidget {
+  const _StopDot();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(
+        color: AppColors.brand,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))],
+      ),
     );
   }
 }

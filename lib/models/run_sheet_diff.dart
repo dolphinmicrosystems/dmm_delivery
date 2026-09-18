@@ -65,7 +65,7 @@ class RunSheetDiff {
   /// True when this upload left the owner's confirmed sequence intact. The
   /// backend decides this, not the client - see the three strategies in
   /// process_run_sheet_upload.py's docstring.
-  bool get orderPreserved => orderStrategy == 'reused' || orderStrategy == 'merged';
+  bool get orderPreserved => orderStrategy == 'reused' || orderStrategy == 'merged' || orderStrategy == 'learned';
 
   /// What changed, as one line: "2 added · 1 updated".
   String get changeSummary {
@@ -90,6 +90,11 @@ class RunSheetDiff {
         // A merge with nothing inserted is a removal: stops left the sheet
         // and the rest held their places.
         'merged' => 'Your stop order was kept for the stops that remain.',
+        // A new route (often one deleted and uploaded again) that drivers have
+        // already run most of: their order, not a fresh optimisation.
+        'learned' when insertedCount == 0 => 'Ordered the way your driver has run these stops before.',
+        'learned' => 'Ordered the way your driver has run these stops before — '
+            '$insertedCount new ${insertedCount == 1 ? 'stop' : 'stops'} slotted in.',
         _ => null,
       };
 }

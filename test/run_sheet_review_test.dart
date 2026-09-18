@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 
+import 'package:dmm_delivery/models/road_legs.dart';
 import 'package:dmm_delivery/models/run_stop.dart';
 import 'package:dmm_delivery/services/depot_locator.dart';
 import 'package:dmm_delivery/widgets/route_preview_map.dart';
@@ -227,6 +228,110 @@ void main() {
 
   group('reordering', _reorderTests);
 
+  group('RoutePreviewMap road path', () {
+    RunStop keyed(String id, double lat, double lng) => RunStop(
+      id: id,
+      seqOrder: 0,
+      customerName: id,
+      address: '',
+      location: LatLng(lat, lng),
+      items: const [],
+      addressKey: id,
+    );
+
+    Future<List<LatLng>> line(WidgetTester tester, List<RunStop> stops, LatLng depot, RoadLegs roadLegs) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 400,
+              child: RoutePreviewMap(stops: stops, depot: depot, roadLegs: roadLegs),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      return tester.widget<PolylineLayer>(find.byType(PolylineLayer)).polylines.single.points;
+    }
+
+    testWidgets('follows the road shape where there is one and goes straight where there is not', (tester) async {
+      const depot = LatLng(-45.8877, 170.4594);
+      final a = keyed('a', -45.8900, 170.4700);
+      final b = keyed('b', -45.8950, 170.4800);
+      const bend = [LatLng(-45.8877, 170.4600), LatLng(-45.8890, 170.4650), LatLng(-45.8900, 170.4700)];
+
+      final points = await line(tester, [a, b], depot, const RoadLegs(shapes: {'depot>a': bend}));
+
+      // depot, the road to a, then straight on to b and straight home.
+      expect(points, [depot, ...bend, b.location, depot]);
+    });
+  });
+
+  group('RoutePreviewMap controls', () {
+    Future<void> pumpMap(WidgetTester tester, List<RunStop> stops, {VoidCallback? onToggleExpanded}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 400,
+              child: RoutePreviewMap(stops: stops, onToggleExpanded: onToggleExpanded),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    // A whole round, Mosgiel to the harbour: fitted, it lands well below the
+    // zoom at which numbered pins stop piling on top of each other. The
+    // middle stop sits at the route's centre so it stays on screen as the
+    // buttons zoom in - off-screen markers are not built at all.
+    final spread = [
+      _stop('a', -45.8700, 170.3500, const []),
+      _stop('b', -45.8800, 170.4300, const []),
+      _stop('c', -45.8900, 170.5100, const []),
+    ];
+
+    testWidgets('a zoomed-out route draws dots, and zooming in brings the numbers back', (tester) async {
+      await pumpMap(tester, spread);
+      expect(find.byType(StopPin), findsNothing);
+
+      for (var i = 0; i < 4; i++) {
+        await tester.tap(find.byTooltip('Zoom in'));
+        await tester.pump();
+      }
+
+      expect(find.byType(StopPin), findsWidgets);
+    });
+
+    testWidgets('zooming out and back to the whole route undoes the zoom', (tester) async {
+      await pumpMap(tester, spread);
+      for (var i = 0; i < 4; i++) {
+        await tester.tap(find.byTooltip('Zoom in'));
+        await tester.pump();
+      }
+      expect(find.byType(StopPin), findsWidgets);
+
+      await tester.tap(find.byTooltip('Show whole route'));
+      await tester.pump();
+
+      expect(find.byType(StopPin), findsNothing);
+    });
+
+    testWidgets('offers to enlarge only when the host can', (tester) async {
+      await pumpMap(tester, spread);
+      expect(find.byTooltip('Enlarge map'), findsNothing);
+
+      var toggles = 0;
+      await pumpMap(tester, spread, onToggleExpanded: () => toggles++);
+      await tester.tap(find.byTooltip('Enlarge map'));
+
+      expect(toggles, 1);
+    });
+  });
+
   group('StopCard shows what to deliver', () {
     // The real "Dynes Transport Amenities" stop from the South Runsheet
     // 14_07_2026 export: two product lines, 12 units in total.
@@ -375,4 +480,5 @@ void _reorderTests() {
     expect(line().first, depot);
     expect(line().last, depot);
   });
+
 }

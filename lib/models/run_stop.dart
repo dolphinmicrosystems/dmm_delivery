@@ -21,6 +21,8 @@ class RunStop {
     this.docket,
     this.phone,
     this.instructions,
+    this.addressKey,
+    this.precision = PinPrecision.exact,
   });
 
   final String id;
@@ -38,6 +40,13 @@ class RunStop {
   final String? docket;
   final String? phone;
   final String? instructions;
+
+  /// The backend's `address_key` - what learned leg times are keyed by.
+  final String? addressKey;
+
+  /// How the pin was found. Anything short of a building gets called out on
+  /// the stop's card, so the owner knows which pins to check.
+  final PinPrecision precision;
 
   /// Total units across every product line - the run sheet's own "Sub
   /// Totals" quantity column.
@@ -73,8 +82,46 @@ class RunStop {
       docket: data['docket'] as String?,
       phone: data['phone'] as String?,
       instructions: data['instructions'] as String?,
+      addressKey: data['address_key'] as String?,
+      precision: PinPrecision.parse(data['precision'] as String?),
     );
   }
+}
+
+/// `delivery_stop.precision`, written by process_run_sheet_upload.py - see
+/// `PRECISIONS` in the backend's ports/geocoding.py, plus `learned`.
+enum PinPrecision {
+  /// The building at that street address.
+  exact,
+
+  /// Where drivers have repeatedly marked it delivered. The best there is.
+  learned,
+
+  /// The business named on the sheet, found by name.
+  business,
+
+  /// Somewhere on the right street; the house number did not match.
+  street,
+
+  /// Only the suburb or town.
+  area;
+
+  /// Absent means exact: every stop written before precision was recorded
+  /// came from a lookup that either matched or failed the whole upload.
+  static PinPrecision parse(String? wire) => switch (wire) {
+    'learned' => learned,
+    'business' => business,
+    'street' => street,
+    'area' => area,
+    _ => exact,
+  };
+
+  /// What to tell the owner about this pin, or null when nothing needs saying.
+  String? get caution => switch (this) {
+    street => 'Approximate pin: street only, no house number matched',
+    area => 'Approximate pin: suburb only, please check',
+    _ => null,
+  };
 }
 
 /// One product line on a stop: "3 x 2 L Standard Milk".

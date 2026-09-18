@@ -163,6 +163,15 @@ void main() {
         expect(diff.orderNote, 'Your stop order was kept for the stops that remain.');
       });
 
+      test('a re-created route says it follows the driver, and counts what was slotted in', () {
+        final kept = RunSheetDiff.fromMap(diffMap(added: 5, strategy: 'learned'));
+        final extended = RunSheetDiff.fromMap(diffMap(added: 5, strategy: 'learned', inserted: 2));
+
+        expect(kept.orderPreserved, isTrue);
+        expect(kept.orderNote, 'Ordered the way your driver has run these stops before.');
+        expect(extended.orderNote, 'Ordered the way your driver has run these stops before — 2 new stops slotted in.');
+      });
+
       test('a first upload promises nothing, because there was no order to keep', () {
         final diff = RunSheetDiff.fromMap(diffMap(added: 5, strategy: 'optimized'));
 

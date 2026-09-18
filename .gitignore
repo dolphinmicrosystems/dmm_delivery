@@ -46,3 +46,7 @@ app.*.map.json
 /android/build/
 /android/.gradle/
 .vscode/
+
+# Local --dart-define values (the CARTO basemap key). Copy
+# dart_defines.example.json to dart_defines.json and fill it in.
+dart_defines.json

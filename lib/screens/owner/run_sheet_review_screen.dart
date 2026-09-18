@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../models/delivery_estimate.dart';
 import '../../models/pending_changes.dart';
+import '../../models/road_legs.dart';
 import '../../models/route_name.dart';
 import '../../models/run_sheet_diff.dart';
 import '../../models/run_stop.dart';
@@ -10,9 +12,11 @@ import '../../services/depot_locator.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/delivery_time_card.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/route_preview_map.dart';
 import '../../widgets/stop_card.dart';
+import '../../widgets/stop_search_delegate.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
 
@@ -69,8 +73,29 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   /// their edits without re-uploading the sheet.
   List<RunStop> _optimizedOrder = const [];
 
+  /// Whether the owner has enlarged the map above the list - see
+  /// [RoutePreviewMap.onToggleExpanded].
+  bool _mapExpanded = false;
+
+  /// For scrolling the list to a stop picked from search. One key per stop
+  /// id, kept across drags, so a card can be found wherever it has moved to.
+  final _listController = ScrollController();
+  final Map<String, GlobalKey> _cardKeys = {};
+
   LatLng? _depot;
   int _skipped = 0;
+
+  /// Stops the backend kept on the run but could not place on a map. Not in
+  /// `_stops`, so they are appended to `manual_order` explicitly - leaving
+  /// them out would read to confirm_run_sheet_upload as "remove these".
+  List<String> _unlocatedIds = const [];
+
+  /// The run's `learned_legs`: driver-measured travel times between its own
+  /// addresses, which the time estimate prefers over distance.
+  Map<String, double> _learnedLegs = const {};
+
+  /// The run's road path for the order the backend proposed.
+  RoadLegs _roadLegs = const RoadLegs();
 
   late final TextEditingController _nameController;
   String? _nameError;
@@ -112,6 +137,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _listController.dispose();
     super.dispose();
   }
 
@@ -177,15 +203,16 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         .get();
 
     final stops = <RunStop>[];
-    var skipped = 0;
+    final unlocatedIds = <String>[];
     for (final doc in stopDocs.docs) {
       final stop = RunStop.fromDoc(doc);
       if (stop == null) {
-        skipped++;
+        unlocatedIds.add(doc.id);
       } else {
         stops.add(stop);
       }
     }
+    final skipped = unlocatedIds.length;
 
     final depot = await DepotLocator().resolve(run.data()?['depot_address'] as String?);
     AppLog.owner('run sheet review loaded', {
@@ -195,7 +222,13 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
       'depotResolved': depot != null,
     });
 
-    return _ReviewData(stops: stops, depot: depot, skipped: skipped);
+    return _ReviewData(
+      stops: stops,
+      depot: depot,
+      unlocatedIds: unlocatedIds,
+      learnedLegs: DeliveryEstimate.learnedLegsFrom(run.data()?['learned_legs']),
+      roadLegs: RoadLegs.fromRun(run.data()?['road_legs']),
+    );
   }
 
   /// Wired to `onReorderItem`, not the deprecated `onReorder`: the newer
@@ -255,6 +288,38 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
     });
   }
 
+  /// Search, then take the owner to the stop: its pin pulses on the map (and
+  /// the map pans to it if it is off screen) and the list scrolls to its card.
+  Future<void> _findStop() async {
+    final index = await searchForStop(context, _stops);
+    if (index == null || !mounted || index >= _stops.length) return;
+    final stop = _stops[index];
+    setState(() => _highlight = StopHighlight.after(_highlight, stop.id));
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToCard(stop.id, index));
+  }
+
+  /// The list is built lazily, so a card far down it has no context to scroll
+  /// to yet. Jump to roughly where it must be first - cards are near enough
+  /// the same height - then let ensureVisible settle it exactly.
+  void _scrollToCard(String stopId, int index, {bool jumped = false}) {
+    if (!mounted) return;
+    final cardContext = _cardKeys[stopId]?.currentContext;
+    if (cardContext != null) {
+      Scrollable.ensureVisible(
+        cardContext,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        alignment: 0.1,
+      );
+      return;
+    }
+    if (jumped || !_listController.hasClients) return;
+    final position = _listController.position;
+    final fraction = _stops.length <= 1 ? 0.0 : index / (_stops.length - 1);
+    _listController.jumpTo(position.maxScrollExtent * fraction);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToCard(stopId, index, jumped: true));
+  }
+
   void _showStop(RunStop stop) {
     final runId = _draftRunId;
     if (runId == null) return;
@@ -289,7 +354,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
       _submitting = true;
       _nameError = null;
     });
-    final manualOrder = [for (final stop in _stops) stop.id];
+    final manualOrder = [for (final stop in _stops) stop.id, ..._unlocatedIds];
     AppLog.owner('run sheet $status', {
       'uploadId': widget.uploadId,
       'reordered': _reordered,
@@ -373,6 +438,11 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
           },
         ),
         actions: [
+          IconButton(
+            tooltip: 'Find a stop',
+            icon: const Icon(Icons.search_rounded),
+            onPressed: _stops.isEmpty ? null : _findStop,
+          ),
           // A real action, not a status pill. The pill that used to sit here
           // read as a button and did nothing when tapped, which is worse
           // than no affordance at all - if it looks pressable it has to do
@@ -412,28 +482,41 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
             _stops = data.stops;
             _optimizedOrder = data.stops;
             _depot = data.depot;
-            _skipped = data.skipped;
+            _skipped = data.unlocatedIds.length;
+            _unlocatedIds = data.unlocatedIds;
+            _learnedLegs = data.learnedLegs;
+            _roadLegs = data.roadLegs;
           }
 
-          return Column(
-            children: [
-              SizedBox(
-                height: 240,
-                width: double.infinity,
-                child: RoutePreviewMap(
-                  stops: _stops,
-                  depot: _depot,
-                  highlight: _highlight,
-                  // The pins were dead on this screen while the confirmed
-                  // route screen's were tappable - backwards, since this is
-                  // the one screen where an owner is actively checking
-                  // whether a pin belongs on the run at all.
-                  onStopTap: (index) => _showStop(_stops[index]),
+          return LayoutBuilder(
+            builder: (context, constraints) => Column(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  // Enlarged, the map takes most of the screen but leaves the
+                  // top of the list and the confirm bar in view, so checking a
+                  // pin never hides what the check is for.
+                  height: _mapExpanded ? constraints.maxHeight * 0.62 : 240,
+                  width: double.infinity,
+                  child: RoutePreviewMap(
+                    stops: _stops,
+                    depot: _depot,
+                    highlight: _highlight,
+                    roadLegs: _roadLegs,
+                    expanded: _mapExpanded,
+                    onToggleExpanded: () => setState(() => _mapExpanded = !_mapExpanded),
+                    // The pins were dead on this screen while the confirmed
+                    // route screen's were tappable - backwards, since this is
+                    // the one screen where an owner is actively checking
+                    // whether a pin belongs on the run at all.
+                    onStopTap: (index) => _showStop(_stops[index]),
+                  ),
                 ),
-              ),
-              Expanded(child: _buildList()),
-              _buildActions(),
-            ],
+                Expanded(child: _buildList()),
+                _buildActions(),
+              ],
+            ),
           );
         },
       ),
@@ -444,8 +527,18 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   Widget _buildList() {
     final totals = milkTotals(_stops);
     final unitCount = totals.fold(0, (running, total) => running + total.quantity);
+    // Recomputed on every build, so a drag re-estimates at once. Sixty-odd
+    // straight-line legs is nothing next to laying out the list itself.
+    // Road driving times where the backend has them, learned times over
+    // those - the same precedence process_run_sheet_upload.py estimates with.
+    final estimate = DeliveryEstimate.forRun(
+      depot: _depot,
+      stops: _stops,
+      learnedLegs: {..._roadLegs.seconds, ..._learnedLegs},
+    );
 
     return ReorderableListView.builder(
+      scrollController: _listController,
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       // Explicit handles instead of the platform defaults: on a phone the
       // default is long-press-anywhere, which collides with tapping a stop
@@ -459,6 +552,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         unitCount: unitCount,
         totals: totals,
         skipped: _skipped,
+        estimate: estimate,
         removed: _removed,
         onRestore: _restoreStop,
         depotResolved: _depot != null,
@@ -494,8 +588,10 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
               behavior: HitTestBehavior.opaque,
               onTap: () => setState(() => _highlight = StopHighlight.after(_highlight, stop.id)),
               child: StopCard(
+                key: _cardKeys.putIfAbsent(stop.id, GlobalKey.new),
                 stop: stop,
                 position: index + 1,
+                arrival: estimate.arrivalOffsets[index],
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -550,11 +646,19 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
 }
 
 class _ReviewData {
-  const _ReviewData({required this.stops, required this.depot, required this.skipped});
+  const _ReviewData({
+    required this.stops,
+    required this.depot,
+    required this.unlocatedIds,
+    required this.learnedLegs,
+    required this.roadLegs,
+  });
 
   final List<RunStop> stops;
   final LatLng? depot;
-  final int skipped;
+  final List<String> unlocatedIds;
+  final Map<String, double> learnedLegs;
+  final RoadLegs roadLegs;
 }
 
 /// Everything above the draggable list: what this route is called, what
@@ -568,6 +672,7 @@ class _ReviewHeader extends StatelessWidget {
     required this.unitCount,
     required this.totals,
     required this.skipped,
+    required this.estimate,
     required this.removed,
     required this.onRestore,
     required this.depotResolved,
@@ -583,6 +688,7 @@ class _ReviewHeader extends StatelessWidget {
   final int unitCount;
   final List<MilkTotal> totals;
   final int skipped;
+  final DeliveryEstimate estimate;
 
   /// Stops the owner has taken off this run, newest first. Shown rather than
   /// hidden: a removal is not written until Confirm, so this panel is the
@@ -669,6 +775,8 @@ class _ReviewHeader extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 10),
+        DeliveryTimeCard(estimate: estimate, depotResolved: depotResolved),
         // Not a warning - the opposite. It answers the question a re-upload
         // actually raises ("did I just lose the order I set last week?"),
         // which otherwise goes unanswered until a driver is out on the run.
@@ -683,8 +791,9 @@ class _ReviewHeader extends StatelessWidget {
         if (skipped > 0) ...[
           const SizedBox(height: 10),
           _Warning(
-            '$skipped stop${skipped == 1 ? '' : 's'} could not be placed on the map and '
-            '${skipped == 1 ? 'is' : 'are'} not shown or sequenced here.',
+            '$skipped stop${skipped == 1 ? '' : 's'} could not be found near the round. '
+            '${skipped == 1 ? 'It stays' : 'They stay'} on the run, last in the order, but '
+            '${skipped == 1 ? 'is' : 'are'} not on the map or in the time estimate.',
           ),
         ],
         if (!depotResolved) ...[

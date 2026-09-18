@@ -27,10 +27,12 @@ yet") are deliberate and explained there.
 ## Commands
 
 - Install deps: `flutter pub get`
-- Run app: `flutter run --dart-define=CARTO_API_KEY=<key>` (without the key the maps still work, but
-  every basemap tile is watermarked — see the CARTO note under Conventions)
+- Run app: `flutter run --dart-define-from-file=dart_defines.json` — copy `dart_defines.example.json` to
+  the gitignored `dart_defines.json` and put the CARTO key in it first; the VS Code launch configs pass
+  the same flag, so they fail to start until that file exists. Without a key the maps still work, but
+  every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (191 tests, all passing)
+- Run all tests: `flutter test` (217 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -152,9 +154,14 @@ its own when the backend goes real. See plan.md's table before assuming a number
 - **A re-upload is an amendment, not a redo**, and the client's copy promises that. Re-uploading a sheet
   for an existing route keeps its name, the stop order the owner dragged, and their per-stop
   instructions; the backend only pays for what changed. `process_run_sheet_upload.py` picks one of three
-  `order_strategy` values — `optimized` (first upload, Routes API), `reused` (same addresses, confirmed
-  order stands), `merged` (stops added/removed, confirmed order kept and new ones slotted in by
-  `domain/run_order.py`) — and only the first costs a routing call. `RunSheetDiff.orderNote` is what says
+  `order_strategy` values:
+  - `optimized`: first upload, sequenced by Google Route Optimization on the road network.
+  - `reused`: same addresses, confirmed order stands.
+  - `merged`: stops added or removed; confirmed order kept and new ones slotted in by `domain/run_order.py`.
+  - `learned`: a new route, often one deleted and re-uploaded, that inherits a driver's previously driven
+    order.
+
+  Only `optimized` costs a routing call. `RunSheetDiff.orderNote` is what says
   so on screen; treat an unknown strategy as `optimized`, i.e. **never** claim the order survived.
 - **A route's name has the same precedence rule as a stop's instructions**: what the owner typed beats the
   name they gave it before, which beats the PDF's `Round:` heading. `circuits.round_source == 'owner'` is
@@ -197,7 +204,18 @@ its own when the backend goes real. See plan.md's table before assuming a number
 - **Reordering uses `onReorderItem`, not the deprecated `onReorder`.** It already compensates for the
   lifted item, so the classic `if (newIndex > oldIndex) newIndex -= 1` fixup must **not** be repeated.
 - A `RunStop` without coordinates is dropped at parse time (`RunStop.fromDoc` returns null) so no
-  downstream consumer needs null checks; the review screen calls the omission out explicitly.
+  downstream consumer needs null checks; the review screen calls the omission out explicitly. The backend
+  now *keeps* stops it could not locate (`precision: "none"`, placed last). So the review screen appends
+  their ids (`_unlocatedIds`) to `manual_order`: leaving them out would tell `confirm_run_sheet_upload`
+  to remove them.
+- **`DeliveryEstimate` mirrors the backend's `domain/travel_time.py`**, the way `DepotLocator.addressKey`
+  mirrors `address_key`: 60 s per place, straight line × 1.35 at 30 km/h, with the run document's
+  `learned_legs` taking priority. `test/delivery_estimate_test.dart` pins the numbers the Python produces;
+  change both sides together. The review screen re-estimates on every build, so dragging updates the
+  total, and each `StopCard` shows its arrival offset. It is an offset, not a clock time: nothing records
+  when the van leaves.
+- `RunStop.precision` (`PinPrecision`) comes from the backend geocoder. Only `street` and `area` show a
+  warning on the card. An unknown value parses as `exact`.
 - `milkTotals()` must stay independent of stop order — reordering a route cannot change what's loaded on
   the van, and a test pins that.
 - Product lines render through `StopItem.label` everywhere; a quantity formatted two ways is a support call.
@@ -297,6 +315,27 @@ Tapping a stop in either screen's list calls its pin out on that shared map — 
 twice has to blink twice or the second tap reads as not registering. The pin pulses three times, is drawn
 above every other marker including the depot, and stays filled afterwards; the map only pans when the pin
 is off screen, for the same reason `initialCameraFit` never re-fits.
+
+`RoutePreviewMap` draws each leg along its road shape from the run's `road_legs` (`RoadLegs.fromRun`, decoded
+with `decodePolyline` at precision 5, as the Routes API returns). Legs are keyed by address pair, not
+position, so dragging a stop keeps the road shape of every leg that still exists, and only the new legs are
+drawn straight until confirm redraws them. Don't reuse the decoder for the rider map: its shape is
+precision 6. Time estimates merge `{...roadLegs.seconds, ...learnedLegs}`, the same precedence as the
+backend. The route screen reads just the times with `roadSecondsFromRun`, which skips decoding the shapes.
+
+`RoutePreviewMap` draws its own controls (zoom in/out, show whole route, and enlarge when the host passes
+`onToggleExpanded` — only the review screen does). Pins come in three tiers by zoom (`_PinTier`): dots
+below 13, compact numbered badges below 14.5, full pins above. A whole round fits at about zoom 12, where
+full pins pile into unreadable stacks. The tier is the only zoom-driven state, so a pinch doesn't rebuild
+every marker on every frame. The called-out pin is always full size. Rotation is disabled, and tiles
+request `@2x` on high-density screens (`retinaMode`).
+
+Both stop lists have a **search** action (`searchForStop` in `lib/widgets/stop_search_delegate.dart`, matching
+logic in `lib/models/stop_search.dart`). Every word typed must appear somewhere on the stop: name, address,
+order number, docket, phone or product. Results whose name starts with the query rank first, then route
+order. Picking a result highlights the pin on both screens. The review screen then scrolls its list to the
+card (the list is built lazily, so it jumps to a rough position first and then fine-tunes); the route
+screen opens the stop's sheet.
 
 The `Inter` variable font is registered once in `pubspec.yaml` at several weights pointing at the same
 file; select weights via `TextStyle(fontWeight: ...)`, not separate family names.

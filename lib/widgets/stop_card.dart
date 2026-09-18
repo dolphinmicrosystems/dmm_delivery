@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/delivery_estimate.dart';
 import '../models/run_stop.dart';
 import '../theme/app_colors.dart';
 import 'route_preview_map.dart';
@@ -18,13 +19,17 @@ import 'route_preview_map.dart';
 /// passes the handle in as `trailing`; nothing about reordering lives here,
 /// so the same card can be reused anywhere a stop needs rendering.
 class StopCard extends StatelessWidget {
-  const StopCard({super.key, required this.stop, required this.position, this.trailing});
+  const StopCard({super.key, required this.stop, required this.position, this.arrival, this.trailing});
 
   final RunStop stop;
 
   /// 1-based position in the current sequence - not `stop.seqOrder`, which
   /// is the stored order and goes stale the moment the list is dragged.
   final int position;
+
+  /// How long after leaving the depot the van reaches this stop, when the
+  /// host has an estimate for the current order.
+  final Duration? arrival;
 
   final Widget? trailing;
 
@@ -75,6 +80,32 @@ class StopCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(stop.address, style: const TextStyle(fontSize: 12, color: AppColors.inkMuted)),
+                if (arrival != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    // An offset, not a clock time: nothing yet records when
+                    // the van leaves, and a wrong clock time is worse than none.
+                    arrival!.inSeconds < 60
+                        ? 'First drop, right by the depot'
+                        : 'About ${DeliveryEstimate.format(arrival!)} after leaving the depot',
+                    style: const TextStyle(fontSize: 11, color: AppColors.inkMuted),
+                  ),
+                ],
+                if (stop.precision.caution case final caution?) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.wrong_location_outlined, size: 14, color: AppColors.warning),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          caution,
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.warning),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 if (stop.items.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Wrap(
