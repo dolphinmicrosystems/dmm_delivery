@@ -4,9 +4,11 @@ import '../state/app_state.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
+import 'owner/owner_drivers_screen.dart';
 import 'owner/owner_home_screen.dart';
 import 'owner/owner_maps_screen.dart';
 import 'owner/owner_menu_drawer.dart';
+import 'owner/owner_routes_screen.dart';
 import 'rider/driver_menu_drawer.dart';
 import 'rider/rider_active_screen.dart';
 import 'rider/rider_earnings_screen.dart';
@@ -44,14 +46,26 @@ class _OwnerShell extends StatefulWidget {
 }
 
 class _OwnerShellState extends State<_OwnerShell> {
+  static const _routesTab = 1;
+
   int _tabIndex = 0;
+
+  void _selectTab(int index) {
+    AppLog.owner('owner tab selected', {'index': index});
+    setState(() => _tabIndex = index);
+  }
 
   @override
   Widget build(BuildContext context) {
     // Owner screens are bodies, not Scaffolds: the header (with its
-    // hamburger), the end drawer and the bottom bar are identical on both
-    // tabs in owner-home.html/owner-maps.html, so they're hosted once here
-    // and survive tab switches along with each tab's scroll position.
+    // hamburger), the end drawer and the bottom bar are identical on every
+    // tab, so they're hosted once here and survive tab switches along with
+    // each tab's scroll position.
+    //
+    // Four tabs - the things an owner uses every day. Routes and Drivers
+    // used to sit a tap or two deep (Home -> "Update routes", menu ->
+    // Settings). More than five would crowd a phone's bar; Alerts is the
+    // candidate fifth once drivers deliver through the app.
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: const _BlueDotAppBar(),
@@ -59,19 +73,20 @@ class _OwnerShellState extends State<_OwnerShell> {
       body: IndexedStack(
         index: _tabIndex,
         children: [
-          OwnerHomeScreen(authState: widget.authState),
+          OwnerHomeScreen(authState: widget.authState, onOpenRoutes: () => _selectTab(_routesTab)),
+          OwnerRoutesScreen(authState: widget.authState),
           OwnerMapsScreen(authState: widget.authState),
+          OwnerDriversScreen(authState: widget.authState),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
-        onDestinationSelected: (index) {
-          AppLog.owner('owner tab selected', {'index': index});
-          setState(() => _tabIndex = index);
-        },
+        onDestinationSelected: _selectTab,
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.alt_route_rounded), label: 'Routes'),
           NavigationDestination(icon: Icon(Icons.map_outlined), label: 'Maps'),
+          NavigationDestination(icon: Icon(Icons.people_alt_outlined), label: 'Drivers'),
         ],
       ),
     );

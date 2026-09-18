@@ -113,7 +113,7 @@ class _OwnerMapsScreenState extends State<OwnerMapsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                 child: Text(
-                  '${board.liveCount} of ${riders.length} live',
+                  '${board.liveCount} of ${riders.length} with a route to deliver',
                   style: const TextStyle(
                     fontSize: 13,
                     color: AppColors.inkMuted,

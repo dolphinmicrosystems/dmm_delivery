@@ -19,11 +19,11 @@ import 'upload_run_sheet_screen.dart';
 /// circuits/{roundKey}), ordered most recently updated first, so the owner
 /// never scans a list of dates to remember.
 ///
-/// This was the Owner's landing screen until owner-home.html replaced it
-/// with the quick-actions hub. It now sits one tap in, behind "Routes",
-/// because choosing *which* route a PDF belongs to is the first step of an
-/// upload - a new route or an existing one - and this list is how that
-/// choice is made.
+/// The Routes tab. A body, not a Scaffold: the owner shell hosts the header,
+/// menu and bottom bar for every tab. Home's "Update routes" action switches
+/// to this tab rather than pushing a second copy of it, because choosing
+/// *which* route a PDF belongs to is the first step of an upload - a new
+/// route or an existing one - and this list is how that choice is made.
 ///
 /// The per-card action says **Update**, not "Upload sheet". Uploading is the
 /// mechanism; what the owner is doing is bringing an existing route up to
@@ -39,25 +39,19 @@ class OwnerRoutesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     AppLog.owner('OwnerRoutesScreen build', {'uid': authState.user?.uid});
-    return Scaffold(
-      backgroundColor: AppColors.surfaceMuted,
-      appBar: AppBar(title: const Text('Routes')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const SectionLabel('Your routes'),
-            const SizedBox(height: 8),
-            _CircuitList(authState: authState),
-            const SizedBox(height: 24),
-            PrimaryButton(
-              label: 'New route',
-              icon: Icons.add_rounded,
-              onPressed: () => startUpload(context, authState, roundKey: null, roundLabel: null),
-            ),
-          ],
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        const SectionLabel('Your routes'),
+        const SizedBox(height: 8),
+        _CircuitList(authState: authState),
+        const SizedBox(height: 24),
+        PrimaryButton(
+          label: 'New route',
+          icon: Icons.add_rounded,
+          onPressed: () => startUpload(context, authState, roundKey: null, roundLabel: null),
         ),
-      ),
+      ],
     );
   }
 }
@@ -189,12 +183,10 @@ class _CircuitCardState extends State<_CircuitCard> {
   // State.context guarded by this State's own `mounted`, which is the check
   // the analyzer can actually reason about across the gap.
   Future<void> _rename(String round) async {
-    final controller = TextEditingController(text: round);
     final name = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => _RenameDialog(controller: controller),
+      builder: (dialogContext) => _RenameDialog(initialName: round),
     );
-    controller.dispose();
     if (name == null) {
       AppLog.owner('rename route canceled', {'roundKey': widget.roundKey});
       if (mounted) setState(() => _revealActions = false);
@@ -383,26 +375,39 @@ class _CircuitCardState extends State<_CircuitCard> {
   }
 }
 
-/// Renaming a route from the list. Stateful only so the name can be
-/// validated as it's typed - the length cap here is the one firestore.rules
-/// enforces, and a name that breaks it comes back as a bare
-/// permission-denied, which reads as a sign-in problem rather than as
-/// "that's too long".
+/// Renaming a route from the list. Stateful so the name can be validated as
+/// it's typed - the length cap here is the one firestore.rules enforces, and a
+/// name that breaks it comes back as a bare permission-denied, which reads as
+/// a sign-in problem rather than as "that's too long".
+///
+/// **The dialog owns its text controller.** It used to be created by the
+/// caller and disposed the moment `showDialog` returned - but that returns
+/// when the dialog is *popped*, while it is still on screen animating out
+/// with its TextField (and the keyboard) attached. Disposing it then tripped
+/// Flutter's `'_dependents.isEmpty': is not true` assertion on every Save and
+/// every Cancel. State.dispose runs only once the dialog is really gone.
 class _RenameDialog extends StatefulWidget {
-  const _RenameDialog({required this.controller});
+  const _RenameDialog({required this.initialName});
 
-  final TextEditingController controller;
+  final String initialName;
 
   @override
   State<_RenameDialog> createState() => _RenameDialogState();
 }
 
 class _RenameDialogState extends State<_RenameDialog> {
+  late final _controller = TextEditingController(text: widget.initialName);
   String? _error;
 
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
   void _submit() {
-    final error = RouteName.validationError(widget.controller.text);
-    final name = RouteName.toSubmit(widget.controller.text);
+    final error = RouteName.validationError(_controller.text);
+    final name = RouteName.toSubmit(_controller.text);
     if (error != null || name == null) {
       // A blank name is rejected rather than silently reverting to the run
       // sheet's heading: the owner opened this dialog to choose a name, and
@@ -418,7 +423,7 @@ class _RenameDialogState extends State<_RenameDialog> {
     return AlertDialog(
       title: const Text('Rename route'),
       content: TextField(
-        controller: widget.controller,
+        controller: _controller,
         autofocus: true,
         maxLength: RouteName.maxLength,
         textCapitalization: TextCapitalization.sentences,
@@ -472,6 +477,11 @@ class _AssignDriverSheet extends StatefulWidget {
 class _AssignDriverSheetState extends State<_AssignDriverSheet> {
   late DateTime _from = _startOfToday();
 
+  /// Who drives it now, if anyone - an unassignment row counts as nobody.
+  String? get _currentUid => widget.current?.driverUid;
+  String? get _currentName =>
+      _currentUid == null ? null : (widget.current?.driverName ?? 'the current driver');
+
   static DateTime _startOfToday() {
     final now = DateTime.now();
     // Midnight, not the current instant: an assignment "from today" should
@@ -523,9 +533,9 @@ class _AssignDriverSheetState extends State<_AssignDriverSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Who drives this route?',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2),
+            Text(
+              _currentName == null ? 'Who drives this route?' : 'Change the driver',
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2),
             ),
             const SizedBox(height: 4),
             const Text(
@@ -547,15 +557,23 @@ class _AssignDriverSheetState extends State<_AssignDriverSheet> {
             const SectionLabel('Drivers'),
             const SizedBox(height: 4),
             Flexible(
-              child: _DriverPicker(authState: widget.authState, from: () => _from),
+              child: _DriverPicker(
+                authState: widget.authState,
+                from: () => _from,
+                currentUid: _currentUid,
+              ),
             ),
-            const Divider(height: 24, color: AppColors.hairline),
-            TextButton.icon(
-              onPressed: () => Navigator.pop(context, _AssignChoice(effectiveFrom: _from)),
-              icon: const Icon(Icons.person_off_outlined, size: 18),
-              label: const Text('Leave it unassigned'),
-              style: TextButton.styleFrom(foregroundColor: AppColors.inkMuted),
-            ),
+            // Only when there is someone to remove - "leave it unassigned" on
+            // a route nobody drives was a button that did nothing.
+            if (_currentName != null) ...[
+              const Divider(height: 24, color: AppColors.hairline),
+              TextButton.icon(
+                onPressed: () => Navigator.pop(context, _AssignChoice(effectiveFrom: _from)),
+                icon: const Icon(Icons.person_remove_outlined, size: 18),
+                label: Text('Remove $_currentName from this route'),
+                style: TextButton.styleFrom(foregroundColor: Colors.red.shade700),
+              ),
+            ],
           ],
         ),
       ),
@@ -564,10 +582,13 @@ class _AssignDriverSheetState extends State<_AssignDriverSheet> {
 }
 
 class _DriverPicker extends StatelessWidget {
-  const _DriverPicker({required this.authState, required this.from});
+  const _DriverPicker({required this.authState, required this.from, this.currentUid});
 
   final AuthState authState;
   final DateTime Function() from;
+
+  /// Ticked in the list, so the owner can see who they would be replacing.
+  final String? currentUid;
 
   @override
   Widget build(BuildContext context) {
@@ -607,8 +628,19 @@ class _DriverPicker extends StatelessWidget {
                   driver.displayName,
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
-                subtitle: Text(driver.email, style: const TextStyle(fontSize: 11.5)),
-                onTap: () => Navigator.pop(context, _AssignChoice(effectiveFrom: from(), driver: driver)),
+                subtitle: Text(
+                  driver.acceptedUid == currentUid ? 'Drives this route now' : driver.email,
+                  style: const TextStyle(fontSize: 11.5),
+                ),
+                trailing: driver.acceptedUid == currentUid
+                    ? const Icon(Icons.check_circle_rounded, color: AppColors.brand)
+                    : null,
+                // Picking the current driver again changes nothing, so it
+                // just closes the sheet rather than writing a duplicate row.
+                onTap: () => Navigator.pop(
+                  context,
+                  driver.acceptedUid == currentUid ? null : _AssignChoice(effectiveFrom: from(), driver: driver),
+                ),
               ),
           ],
         );

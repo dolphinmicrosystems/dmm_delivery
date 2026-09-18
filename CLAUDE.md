@@ -90,7 +90,7 @@ with the ephemeral workspace.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
 `_DriverShell` (the old 3-tab mock: Orders/Active/Earnings, driven by `AppState`) and *everyone else,
-including a null role*, to `_OwnerShell` (2 tabs: Home/Maps). Owner screens are **bodies, not
+including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Maps/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
 
@@ -108,10 +108,10 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
                          long-press a card to rename (round/round_source) or delete
 OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
 OwnerRiderScreen       → RiderBoardApi.fetchRiderMap → encoded polyline + position
-OwnerSettingsScreen    → driver_invitations (invite / rename / resend, all four states) +
+OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
                          DriverAccessApi → driver-access function (remove / restore)
                          + app_settings/invitations (how long a new invite stays valid)
-                         + user_profiles/{uid} (the account card) → OwnerProfileScreen
+OwnerSettingsScreen    → (menu) user_profiles/{uid}, the account card → OwnerProfileScreen
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
 ```
 

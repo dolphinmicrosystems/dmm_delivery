@@ -7,16 +7,18 @@ import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
 import '../../widgets/pill_badge.dart';
 import '../../widgets/section_label.dart';
-import 'owner_routes_screen.dart';
-import 'owner_settings_screen.dart';
+import 'owner_drivers_screen.dart';
 
 /// The Owner's landing screen, ported from owner-home.html: a greeting and
 /// three quick actions, rather than a data list. The route list that used to
-/// live here moved to OwnerRoutesScreen, behind the "Update routes" action.
+/// live here is the Routes tab, which "Update routes" switches to.
 class OwnerHomeScreen extends StatelessWidget {
-  const OwnerHomeScreen({super.key, required this.authState});
+  const OwnerHomeScreen({super.key, required this.authState, required this.onOpenRoutes});
 
   final AuthState authState;
+
+  /// Switches the owner shell to its Routes tab.
+  final VoidCallback onOpenRoutes;
 
   @override
   Widget build(BuildContext context) {
@@ -67,10 +69,8 @@ class OwnerHomeScreen extends StatelessWidget {
           subtitle: 'Bring a route up to date from its latest PDF',
           icon: Icons.published_with_changes_rounded,
           onPressed: () {
-            AppLog.owner('open OwnerRoutesScreen');
-            Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => OwnerRoutesScreen(authState: authState)));
+            AppLog.owner('home -> Routes tab');
+            onOpenRoutes();
           },
         ),
       ],

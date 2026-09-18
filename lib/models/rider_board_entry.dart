@@ -7,9 +7,14 @@ import 'driver_invitation.dart';
 /// "Idle" - but only the first is a real, observable state: the others were
 /// placeholder flavour. Anything that isn't actively on a route reads as
 /// offline until the backend can distinguish more.
+///
+/// The labels say only what the backend knows. `on_route` means "has a route
+/// with stops still to deliver" - nothing observes a driver yet, no GPS, no
+/// "started" tap - so "On route" and "live" claimed a driver was out driving
+/// before anyone had left the depot. Reword again when driver GPS lands.
 enum RiderPresence {
-  onRoute('On route'),
-  offline('Offline');
+  onRoute('Has a route'),
+  offline('No route');
 
   const RiderPresence(this.label);
 
