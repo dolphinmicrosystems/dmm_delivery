@@ -11,9 +11,10 @@ import '../../widgets/pill_badge.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
+import 'driver_detail_screen.dart';
 
-/// The Drivers tab: the roster (invite, resend, rename, remove and restore)
-/// and how long a new invitation stays good for.
+/// The Drivers tab: the roster - invite, resend, rename, remove and restore.
+/// How long an invitation stays open is a setting, and lives in Settings.
 ///
 /// A body, not a Scaffold - it is one of the owner shell's tabs, which hosts
 /// the header, menu and bottom bar once for all of them. It used to be the
@@ -38,84 +39,8 @@ class OwnerDriversScreen extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _DriverList(authState: authState),
-        const SizedBox(height: 24),
-        const SectionLabel('Invitation validity'),
-        const SizedBox(height: 8),
-        _InvitationValidityCard(authState: authState),
       ],
     );
-  }
-}
-
-/// How long a new invitation stays good for.
-///
-/// Worth a control rather than a constant because the right answer is a
-/// judgement about people, not about software: an owner onboarding a driver
-/// who starts on Monday wants a short window, and one inviting a relief
-/// driver for the season wants a long one. The old value was seven days,
-/// hardcoded in the client, and nothing said so anywhere on screen.
-class _InvitationValidityCard extends StatelessWidget {
-  const _InvitationValidityCard({required this.authState});
-
-  final AuthState authState;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<int>(
-      stream: authState.invitationTtlDays(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          AppLog.owner.error('invitation ttl stream failed', snapshot.error, snapshot.stackTrace);
-        }
-        final days = snapshot.data ?? InvitationTtl.fallback;
-
-        return SurfaceCard(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'New invitations expire after ${InvitationTtl.label(days)}',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                'After that a driver signing in is turned away and has to be invited '
-                'again. Changing this affects new invitations only — invitations '
-                'already sent keep the date they were given.',
-                style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final preset in InvitationTtl.presets)
-                    ChoiceChip(
-                      label: Text(InvitationTtl.label(preset)),
-                      selected: preset == days,
-                      onSelected: (selected) {
-                        if (!selected || preset == days) return;
-                        _set(context, preset);
-                      },
-                    ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _set(BuildContext context, int days) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await authState.setInvitationTtlDays(days);
-    } on FirebaseException catch (error, stack) {
-      AppLog.owner.error('invitation ttl write failed', error, stack, {'days': days});
-      messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
-    }
   }
 }
 
@@ -396,6 +321,15 @@ class _DriverRowState extends State<_DriverRow> {
     final tone = _tone;
 
     return ListTile(
+      // The way into everything about one driver: record, routes, vehicle.
+      onTap: () {
+        AppLog.owner('open DriverDetailScreen', {'status': _invitation.status.name});
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => DriverDetailScreen(authState: widget.authState, invitation: _invitation),
+          ),
+        );
+      },
       leading: Icon(
         switch (_invitation.status) {
           InvitationStatus.accepted => Icons.local_shipping_rounded,

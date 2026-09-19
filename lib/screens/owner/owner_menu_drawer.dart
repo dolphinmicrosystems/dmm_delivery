@@ -46,7 +46,7 @@ class OwnerMenuDrawer extends StatelessWidget {
             _MenuItem(
               icon: Icons.settings_outlined,
               title: 'Settings',
-              subtitle: 'Account, sign out',
+              subtitle: 'Account, invitation deadline, sign out',
               onTap: () {
                 AppLog.owner('menu -> Settings');
                 Navigator.of(context).pop();

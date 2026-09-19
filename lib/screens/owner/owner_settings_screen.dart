@@ -1,15 +1,19 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../../models/driver_invitation.dart';
 import '../../models/owner_profile.dart';
+import '../../services/driver_inviter.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
 import 'owner_profile_screen.dart';
 
-/// Reached from the hamburger menu: the owner's own account. The driver roster
-/// and invitation validity that used to sit here have their own tab now -
-/// see OwnerDriversScreen.
+/// Reached from the hamburger menu: the owner's own account, and how long a
+/// driver has to accept an invitation. The roster itself is the Drivers tab
+/// (OwnerDriversScreen).
 class OwnerSettingsScreen extends StatelessWidget {
   const OwnerSettingsScreen({super.key, required this.authState});
 
@@ -24,6 +28,10 @@ class OwnerSettingsScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _AccountCard(authState: authState),
+          const SizedBox(height: 24),
+          const SectionLabel('Driver invitations'),
+          const SizedBox(height: 8),
+          _InvitationDeadlineCard(authState: authState),
           const SizedBox(height: 24),
         ],
       ),
@@ -115,5 +123,84 @@ class _AccountCard extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+/// How long a driver has to accept an invitation.
+///
+/// Worth a control rather than a constant because the right answer is a
+/// judgement about people, not about software: an owner onboarding a driver
+/// who starts on Monday wants a short window, and one inviting a relief
+/// driver for the season wants a long one.
+///
+/// The explanation on the card is deliberately complete, because the setting
+/// is easy to misread as "how long a driver keeps access". It is not: the
+/// deadline only governs *accepting* - handle_sign_in.py checks expiry only
+/// for an account that has never signed in - so a driver who has joined
+/// keeps working until they are removed, whatever this says.
+class _InvitationDeadlineCard extends StatelessWidget {
+  const _InvitationDeadlineCard({required this.authState});
+
+  final AuthState authState;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: authState.invitationTtlDays(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          AppLog.owner.error('invitation ttl stream failed', snapshot.error, snapshot.stackTrace);
+        }
+        final days = snapshot.data ?? InvitationTtl.fallback;
+
+        return SurfaceCard(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Invitation deadline',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 4),
+              // Kept to one line on purpose - an earlier four-point version
+              // went unread. The one thing it must not be mistaken for is
+              // "how long a driver keeps access", so that is what it says.
+              const Text(
+                'Days a driver has to sign in after being invited. '
+                'Once signed in, they keep access.',
+                style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in InvitationTtl.presets)
+                    ChoiceChip(
+                      label: Text(InvitationTtl.label(preset)),
+                      selected: preset == days,
+                      onSelected: (selected) {
+                        if (!selected || preset == days) return;
+                        _set(context, preset);
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _set(BuildContext context, int days) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await authState.setInvitationTtlDays(days);
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('invitation ttl write failed', error, stack, {'days': days});
+      messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
+    }
   }
 }

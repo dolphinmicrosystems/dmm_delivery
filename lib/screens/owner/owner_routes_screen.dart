@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../../models/driver_invitation.dart';
 import '../../models/route_assignment.dart';
 import '../../models/route_name.dart';
 import '../../services/route_assigner.dart';
@@ -13,6 +12,7 @@ import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
 import 'route_map_screen.dart';
+import '../../widgets/schedule_run_sheet.dart';
 import 'upload_run_sheet_screen.dart';
 
 /// FR3 (DMM-08-10) lite: one card per circuit ("latest state per route" -
@@ -214,14 +214,15 @@ class _CircuitCardState extends State<_CircuitCard> {
     final ownerUid = widget.authState.ownerUid;
     if (ownerUid == null) return;
 
-    final choice = await showModalBottomSheet<_AssignChoice>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _AssignDriverSheet(
-        authState: widget.authState,
-        current: RouteAssignment.activeAt(widget.assignments, DateTime.now()),
-      ),
+    // The shared scheduling sheet, with this route fixed: pick the driver,
+    // the day, the start time and whether it repeats. The driver page opens
+    // the same sheet with the driver fixed instead.
+    final choice = await showScheduleRunSheet(
+      context,
+      authState: widget.authState,
+      roundKey: widget.roundKey,
+      routeName: (widget.data['round'] as String?) ?? 'this route',
+      current: RouteAssignment.activeAt(widget.assignments, DateTime.now()),
     );
 
     if (choice == null || !mounted) {
@@ -234,8 +235,10 @@ class _CircuitCardState extends State<_CircuitCard> {
       await RouteAssigner.assign(
         ownerUid: ownerUid,
         roundKey: widget.roundKey,
-        effectiveFrom: choice.effectiveFrom,
+        effectiveFrom: choice.date,
         driver: choice.driver,
+        startTime: choice.startTime,
+        oneDay: choice.oneDay,
       );
       if (mounted) setState(() => _revealActions = false);
     } on FirebaseException catch (error, stack) {
@@ -444,207 +447,6 @@ class _RenameDialogState extends State<_RenameDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         TextButton(onPressed: _submit, child: const Text('Save')),
       ],
-    );
-  }
-}
-
-/// What the assign sheet came back with.
-class _AssignChoice {
-  const _AssignChoice({required this.effectiveFrom, this.driver});
-
-  final DateTime effectiveFrom;
-
-  /// Null takes the route off everybody - which is a row, not a deletion.
-  final DriverInvitation? driver;
-}
-
-/// Choosing who drives a route, and from when.
-///
-/// The date matters as much as the driver. "Ana takes over on the 15th" is a
-/// decision an owner makes on the 1st, and a sheet that could only mean
-/// "starting now" would force them to remember to come back - which is the
-/// thing this whole model exists to avoid.
-class _AssignDriverSheet extends StatefulWidget {
-  const _AssignDriverSheet({required this.authState, this.current});
-
-  final AuthState authState;
-  final RouteAssignment? current;
-
-  @override
-  State<_AssignDriverSheet> createState() => _AssignDriverSheetState();
-}
-
-class _AssignDriverSheetState extends State<_AssignDriverSheet> {
-  late DateTime _from = _startOfToday();
-
-  /// Who drives it now, if anyone - an unassignment row counts as nobody.
-  String? get _currentUid => widget.current?.driverUid;
-  String? get _currentName =>
-      _currentUid == null ? null : (widget.current?.driverName ?? 'the current driver');
-
-  static DateTime _startOfToday() {
-    final now = DateTime.now();
-    // Midnight, not the current instant: an assignment "from today" should
-    // cover a run confirmed at 6am, not only one confirmed after this tap.
-    return DateTime(now.year, now.month, now.day);
-  }
-
-  String get _fromLabel {
-    final today = _startOfToday();
-    if (_from == today) return 'from today';
-    if (_from == today.add(const Duration(days: 1))) return 'from tomorrow';
-    return 'from ${_from.day}/${_from.month}/${_from.year}';
-  }
-
-  Future<void> _pickDate() async {
-    final today = _startOfToday();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _from,
-      firstDate: today,
-      // A year out covers "the new driver starts next season" without
-      // offering a date nobody is planning for.
-      lastDate: today.add(const Duration(days: 365)),
-    );
-    if (picked != null && mounted) setState(() => _from = picked);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.hairline,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _currentName == null ? 'Who drives this route?' : 'Change the driver',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'They keep it until you assign someone else — you don\'t need to '
-              'set it again each week.',
-              style: TextStyle(fontSize: 12.5, color: AppColors.inkMuted, height: 1.4),
-            ),
-            const SizedBox(height: 14),
-            OutlinedButton.icon(
-              onPressed: _pickDate,
-              icon: const Icon(Icons.event_rounded, size: 18),
-              label: Text('Starts $_fromLabel'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const SectionLabel('Drivers'),
-            const SizedBox(height: 4),
-            Flexible(
-              child: _DriverPicker(
-                authState: widget.authState,
-                from: () => _from,
-                currentUid: _currentUid,
-              ),
-            ),
-            // Only when there is someone to remove - "leave it unassigned" on
-            // a route nobody drives was a button that did nothing.
-            if (_currentName != null) ...[
-              const Divider(height: 24, color: AppColors.hairline),
-              TextButton.icon(
-                onPressed: () => Navigator.pop(context, _AssignChoice(effectiveFrom: _from)),
-                icon: const Icon(Icons.person_remove_outlined, size: 18),
-                label: Text('Remove $_currentName from this route'),
-                style: TextButton.styleFrom(foregroundColor: Colors.red.shade700),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DriverPicker extends StatelessWidget {
-  const _DriverPicker({required this.authState, required this.from, this.currentUid});
-
-  final AuthState authState;
-  final DateTime Function() from;
-
-  /// Ticked in the list, so the owner can see who they would be replacing.
-  final String? currentUid;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: authState.invitations(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator());
-        }
-
-        final now = DateTime.now();
-        // Only drivers who have actually signed in: an invitation nobody has
-        // accepted has no uid, so there is nothing to assign a route to.
-        final drivers = [
-          for (final doc in snapshot.data?.docs ?? const []) DriverInvitation.fromDoc(doc, now: now),
-        ].where((d) => d.acceptedUid != null).toList()..sort(DriverInvitation.compare);
-
-        if (drivers.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Text(
-              'No drivers have accepted yet. Register one in Settings, and they '
-              'appear here once they sign in.',
-              style: TextStyle(fontSize: 13, color: AppColors.inkMuted, height: 1.4),
-            ),
-          );
-        }
-
-        return ListView(
-          shrinkWrap: true,
-          children: [
-            for (final driver in drivers)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const CircleAvatar(radius: 18, child: Icon(Icons.person_rounded, size: 18)),
-                title: Text(
-                  driver.displayName,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  driver.acceptedUid == currentUid ? 'Drives this route now' : driver.email,
-                  style: const TextStyle(fontSize: 11.5),
-                ),
-                trailing: driver.acceptedUid == currentUid
-                    ? const Icon(Icons.check_circle_rounded, color: AppColors.brand)
-                    : null,
-                // Picking the current driver again changes nothing, so it
-                // just closes the sheet rather than writing a duplicate row.
-                onTap: () => Navigator.pop(
-                  context,
-                  driver.acceptedUid == currentUid ? null : _AssignChoice(effectiveFrom: from(), driver: driver),
-                ),
-              ),
-          ],
-        );
-      },
     );
   }
 }

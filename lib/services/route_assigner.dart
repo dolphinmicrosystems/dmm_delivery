@@ -31,11 +31,15 @@ class RouteAssigner {
     required String roundKey,
     required DateTime effectiveFrom,
     DriverInvitation? driver,
+    String? startTime,
+    bool oneDay = false,
   }) async {
     AppLog.owner('assigning route', {
       'roundKey': roundKey,
       'assigned': driver != null,
       'from': effectiveFrom.toIso8601String(),
+      'startTime': startTime,
+      'oneDay': oneDay,
     });
 
     await FirebaseFirestore.instance.collection('route_assignments').add({
@@ -47,6 +51,11 @@ class RouteAssigner {
       'driver_uid': driver?.acceptedUid,
       'driver_name': driver?.displayName,
       'effective_from': Timestamp.fromDate(effectiveFrom),
+      // 24-hour "HH:MM" (run_time.dart), or left out to keep the time that
+      // applied before. Both shapes are what the rules accept.
+      'start_time': ?startTime,
+      // Only on effective_from's day; see RouteAssignment.oneDay.
+      if (oneDay) 'one_day': true,
       'created_at': FieldValue.serverTimestamp(),
       'created_by': ownerUid,
     });

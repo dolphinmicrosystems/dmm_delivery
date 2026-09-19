@@ -32,7 +32,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (217 tests, all passing)
+- Run all tests: `flutter test` (237 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -109,9 +109,15 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
 OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
 OwnerRiderScreen       → RiderBoardApi.fetchRiderMap → encoded polyline + position
 OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
-                         DriverAccessApi → driver-access function (remove / restore)
-                         + app_settings/invitations (how long a new invite stays valid)
+                         DriverAccessApi → driver-access function (remove / restore);
+                         tap a row → DriverDetailScreen
+DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
+                         + route_assignments/circuits: the Schedule section (regular routes, upcoming
+                           runs, days a colleague covers) and "Schedule a run"
+                         + vehicles (VehicleService: assign / change / remove / add, one per driver)
 OwnerSettingsScreen    → (menu) user_profiles/{uid}, the account card → OwnerProfileScreen
+                         + app_settings/invitations (the invitation deadline: how long a driver
+                         has to accept; says on screen that it stops mattering once they sign in)
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
 ```
 
@@ -352,6 +358,15 @@ below 13, compact numbered badges below 14.5, full pins above. A whole round fit
 full pins pile into unreadable stacks. The tier is the only zoom-driven state, so a pinch doesn't rebuild
 every marker on every frame. The called-out pin is always full size. Rotation is disabled, and tiles
 request `@2x` on high-density screens (`retinaMode`).
+
+**Scheduling is one sheet, `showScheduleRunSheet`** (`lib/widgets/schedule_run_sheet.dart`). The Routes tab
+opens it with the route fixed (long-press, then the person icon); the driver page opens it with the driver
+fixed ("Schedule a run"). It sets the date, a start time, and **every day from then** vs **this day only**,
+and shows the route's expected run time and finish time. The expected time comes from
+`RouteEstimates.forRoute`, which reads the latest run's `estimated_total_s`. It writes one
+`route_assignments` row through `RouteAssigner` (`start_time`, `one_day`). The one-day and start-time rules
+live in `RouteAssignment.activeAt`, which mirrors the backend's `domain/route_assignment.py`; keep them in
+step. Times are stored "HH:MM" and shown through `lib/models/run_time.dart`.
 
 Both stop lists have a **search** action (`searchForStop` in `lib/widgets/stop_search_delegate.dart`, matching
 logic in `lib/models/stop_search.dart`). Every word typed must appear somewhere on the stop: name, address,
