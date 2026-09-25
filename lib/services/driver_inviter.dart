@@ -66,16 +66,14 @@ class DriverInviter {
       'role': role.wire,
       'driver_name': ?name,
       if (name != null) 'driver_name_source': 'owner',
-      // The three rate-limit counter fields (invite_count_14d,
-      // first_invite_in_window_at, invite_number_lifetime) are intentionally
-      // NOT written here. They are stamped by the `backfill_invite_counters`
-      // Cloud Function inside a transaction after this write succeeds; doing
-      // them client-side opens a race when two owners invite the same email
-      // at the same time. firestore.rules requires the counters to be present
-      // and within bounds, so the function must finish before any subsequent
-      // write to the same doc.
       'removed_at': null,
-    });
+      // The rate-limit counters (invite_count_14d, first_invite_in_window_at,
+      // invite_number_lifetime, counted_invited_at) are the server's: the
+      // backfill-invite-counters function advances them once per invite, and
+      // firestore.rules refuses any write from here that sets or changes one.
+      // Hence the merge - a resend must carry them across untouched, and a
+      // whole-document write would drop them, which the rules also refuse.
+    }, SetOptions(merge: true));
 
     AppLog.owner('invite written', {'ttlDays': ttlDays, 'role': role.wire});
   }
@@ -83,9 +81,8 @@ class DriverInviter {
   /// Renews an invitation that is pending or expired, keeping whatever the
   /// driver is already called.
   ///
-  /// The name is carried across explicitly because this is a whole-document
-  /// write, not a merge - a resend that dropped it would silently un-name
-  /// someone the owner had labelled. Only an owner-sourced name is carried:
+  /// The name is carried across explicitly rather than trusted to the merge,
+  /// so what a resend writes is the whole of what the owner meant. Only an owner-sourced name is carried:
   /// a name Google supplied belongs to an acceptance that, by definition,
   /// hasn't happened on a row being resent.
   static Future<void> resend({
@@ -103,9 +100,9 @@ class DriverInviter {
       ownerUid: ownerUid,
       ttlDays: ttlDays,
       name: invitation.isOwnerNamed ? invitation.driverName : null,
-      // Carried across explicitly: this is a whole-document write, and a
-      // resend that silently downgraded an owner invitation to a driver one
-      // would be found out only when they signed in to the wrong app.
+      // Carried across explicitly: a resend that silently downgraded an owner
+      // invitation to a driver one would be found out only when they signed
+      // in to the wrong app.
       role: invitation.role,
     );
   }

@@ -11,10 +11,19 @@ import 'surface_card.dart';
 /// distance until drivers have driven the legs, and missing the depot legs
 /// when the depot has not been located.
 class DeliveryTimeCard extends StatelessWidget {
-  const DeliveryTimeCard({super.key, required this.estimate, required this.depotResolved});
+  const DeliveryTimeCard({
+    super.key,
+    required this.estimate,
+    required this.depotResolved,
+    this.inputs = const EstimateInputs(),
+  });
 
   final DeliveryEstimate estimate;
   final bool depotResolved;
+
+  /// What the times were worked out from - so the card can say when they come
+  /// from the drivers' own runs rather than from defaults.
+  final EstimateInputs inputs;
 
   @override
   Widget build(BuildContext context) {
@@ -37,10 +46,17 @@ class DeliveryTimeCard extends StatelessWidget {
                 Text(
                   '${DeliveryEstimate.format(estimate.drive)} driving · '
                   '${DeliveryEstimate.format(estimate.dwell)} at $stops '
-                  '${stops == 1 ? 'stop' : 'stops'} (1 min each)'
+                  '${stops == 1 ? 'stop' : 'stops'}'
                   '${depotResolved ? '' : ' · depot legs not included'}',
                   style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
                 ),
+                if (inputs.isLearned) ...[
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Timed from your drivers\' own runs',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.brand),
+                  ),
+                ],
               ],
             ),
           ),

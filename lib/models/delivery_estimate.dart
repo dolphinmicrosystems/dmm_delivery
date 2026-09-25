@@ -14,12 +14,20 @@ import 'run_stop.dart';
 /// formula are a contract - change one side and you must change the other,
 /// or the figure jumps when the screen is reopened.
 ///
-/// Learned leg times - how long drivers have really taken between two
-/// addresses - arrive on the run document as `learned_legs` and win over the
-/// distance estimate for the legs they cover, exactly as they do server-side.
+/// Three sources for a leg, best first, the same order the backend uses:
+///  * `learnedLegs` - how long drivers have really taken between two
+///    addresses. Used as they stand: they already include how that driver
+///    drives.
+///  * `roadSeconds` - Google's road time for the leg (`road_legs`), scaled by
+///    [speedFactor], the assigned driver's pace against Google.
+///  * the straight-line estimate below, scaled the same way.
+///
+/// Time at each stop comes from `dwellByKey` - what each address has been
+/// learned to take, or the business's default - not a flat minute.
 class DeliveryEstimate {
   const DeliveryEstimate({
     required this.arrivalOffsets,
+    required this.stopTimes,
     required this.drive,
     required this.dwell,
   });
@@ -39,6 +47,10 @@ class DeliveryEstimate {
 
   /// For each stop, how long after leaving the depot the van gets there.
   final List<Duration> arrivalOffsets;
+
+  /// The time allowed at each stop, in the same order. Zero for a second
+  /// order at a door the van is already standing at.
+  final List<Duration> stopTimes;
   final Duration drive;
   final Duration dwell;
 
@@ -56,17 +68,28 @@ class DeliveryEstimate {
     required LatLng? depot,
     required List<RunStop> stops,
     Map<String, double> learnedLegs = const {},
+    Map<String, double> roadSeconds = const {},
+    Map<String, double> dwellByKey = const {},
+    double speedFactor = 1.0,
+    Duration defaultStopTime = dwellPerStop,
   }) {
     double legSeconds(LatLng a, String? aKey, LatLng b, String? bKey) {
       if (a == b) return 0;
       if (aKey != null && bKey != null) {
-        final known = learnedLegs[legKey(aKey, bKey)];
-        if (known != null) return known;
+        final key = legKey(aKey, bKey);
+        final driven = learnedLegs[key];
+        if (driven != null) return driven;
+        final road = roadSeconds[key];
+        if (road != null) return road * speedFactor;
       }
-      return estimatedLegSeconds(a, b);
+      return estimatedLegSeconds(a, b) * speedFactor;
     }
 
+    double stopSeconds(RunStop stop) =>
+        dwellByKey[stop.addressKey] ?? defaultStopTime.inSeconds.toDouble();
+
     final arrivals = <Duration>[];
+    final stopTimes = <Duration>[];
     var clock = 0.0;
     var drive = 0.0;
     var dwell = 0.0;
@@ -78,10 +101,11 @@ class DeliveryEstimate {
       clock += leg;
       drive += leg;
       arrivals.add(Duration(seconds: clock.round()));
-      if (fromDepot || leg > 0) {
-        clock += dwellPerStop.inSeconds;
-        dwell += dwellPerStop.inSeconds;
-      }
+      // A second order at the same door is delivered in the same stop.
+      final atStop = fromDepot || leg > 0 ? stopSeconds(stop) : 0.0;
+      stopTimes.add(Duration(seconds: atStop.round()));
+      clock += atStop;
+      dwell += atStop;
       previous = stop.location;
       previousKey = stop.addressKey;
       fromDepot = false;
@@ -91,12 +115,14 @@ class DeliveryEstimate {
     }
     return DeliveryEstimate(
       arrivalOffsets: arrivals,
+      stopTimes: stopTimes,
       drive: Duration(seconds: drive.round()),
       dwell: Duration(seconds: dwell.round()),
     );
   }
 
-  /// Reads the run document's `learned_legs` map, ignoring anything malformed.
+  /// Reads a map of seconds off the run document (`learned_legs`,
+  /// `dwell_by_key`), ignoring anything malformed.
   static Map<String, double> learnedLegsFrom(Object? raw) {
     if (raw is! Map) return const {};
     return {
@@ -123,4 +149,47 @@ class DeliveryEstimate {
     final h = math.pow(math.sin(dLat / 2), 2) + math.cos(lat1) * math.cos(lat2) * math.pow(math.sin(dLng / 2), 2);
     return 2 * earthRadiusKm * math.asin(math.sqrt(h));
   }
+}
+
+/// The figures a run document carries so the app can re-estimate a dragged
+/// order exactly as the backend did: what each address takes, the assigned
+/// driver's pace, and the business's default stop time.
+class EstimateInputs {
+  const EstimateInputs({
+    this.learnedLegs = const {},
+    this.roadSeconds = const {},
+    this.dwellByKey = const {},
+    this.speedFactor = 1.0,
+    this.defaultStopTime = DeliveryEstimate.dwellPerStop,
+  });
+
+  final Map<String, double> learnedLegs;
+  final Map<String, double> roadSeconds;
+  final Map<String, double> dwellByKey;
+  final double speedFactor;
+  final Duration defaultStopTime;
+
+  /// True when some of this came from drivers rather than from defaults.
+  bool get isLearned => speedFactor != 1.0 || dwellByKey.values.any((s) => s != defaultStopTime.inSeconds);
+
+  factory EstimateInputs.fromRun(Map<String, dynamic>? run, {Map<String, double> roadSeconds = const {}}) {
+    final defaultStop = (run?['default_dwell_s'] as num?)?.toInt();
+    return EstimateInputs(
+      learnedLegs: DeliveryEstimate.learnedLegsFrom(run?['learned_legs']),
+      roadSeconds: roadSeconds,
+      dwellByKey: DeliveryEstimate.learnedLegsFrom(run?['dwell_by_key']),
+      speedFactor: (run?['speed_factor'] as num?)?.toDouble() ?? 1.0,
+      defaultStopTime: defaultStop == null ? DeliveryEstimate.dwellPerStop : Duration(seconds: defaultStop),
+    );
+  }
+
+  DeliveryEstimate estimate({required LatLng? depot, required List<RunStop> stops}) => DeliveryEstimate.forRun(
+    depot: depot,
+    stops: stops,
+    learnedLegs: learnedLegs,
+    roadSeconds: roadSeconds,
+    dwellByKey: dwellByKey,
+    speedFactor: speedFactor,
+    defaultStopTime: defaultStopTime,
+  );
 }

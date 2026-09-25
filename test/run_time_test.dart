@@ -27,4 +27,20 @@ void main() {
     expect(expectedFinish(null, const Duration(hours: 2)), isNull);
     expect(expectedFinish('05:00', null), isNull);
   });
+
+  group('StopTime', () {
+    test('keeps the setting inside the range the rules accept', () {
+      expect(StopTime.sanitize(180), 180);
+      expect(StopTime.sanitize(5), StopTime.fallbackSeconds);
+      expect(StopTime.sanitize(3600), StopTime.fallbackSeconds);
+      expect(StopTime.sanitize(null), StopTime.fallbackSeconds);
+    });
+
+    test('reads as people say it', () {
+      expect(StopTime.label(60), '1 min');
+      expect(StopTime.label(300), '5 min');
+      expect(StopTime.label(45), '45 sec');
+      expect(StopTime.label(150), '2 min 30');
+    });
+  });
 }

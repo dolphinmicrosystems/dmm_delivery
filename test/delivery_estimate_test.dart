@@ -71,4 +71,78 @@ void main() {
     expect(PinPrecision.parse('street').caution, isNotNull);
     expect(PinPrecision.parse('area').caution, isNotNull);
   });
+
+  // The expected numbers below are what the backend's domain/travel_time.py
+  // returns for the same inputs, as above.
+  group('learned figures', () {
+    final road = {
+      DeliveryEstimate.legKey(DeliveryEstimate.depotKey, 'a'): 600.0,
+      DeliveryEstimate.legKey('a', 'b'): 120.0,
+      DeliveryEstimate.legKey('b', DeliveryEstimate.depotKey): 700.0,
+    };
+
+    test('Google road times, scaled by how fast the driver actually drives', () {
+      final estimate = DeliveryEstimate.forRun(
+        depot: depot,
+        stops: [a, b],
+        roadSeconds: road,
+        speedFactor: 1.2,
+      );
+
+      expect([for (final d in estimate.arrivalOffsets) d.inSeconds], [720, 924]);
+      expect(estimate.drive.inSeconds, 1704);
+    });
+
+    test('each address takes as long as it has been learned to take', () {
+      final estimate = DeliveryEstimate.forRun(
+        depot: depot,
+        stops: [a, b],
+        roadSeconds: road,
+        dwellByKey: {'a': 300.0, 'b': 45.0},
+      );
+
+      expect([for (final d in estimate.stopTimes) d.inSeconds], [300, 45]);
+      expect(estimate.dwell.inSeconds, 345);
+      expect(estimate.total.inSeconds, 1765);
+    });
+
+    test('a driver-measured leg is that driver already, and is not scaled again', () {
+      final estimate = DeliveryEstimate.forRun(
+        depot: depot,
+        stops: [a],
+        learnedLegs: {DeliveryEstimate.legKey(DeliveryEstimate.depotKey, 'a'): 500.0},
+        roadSeconds: road,
+        speedFactor: 1.5,
+      );
+
+      expect(estimate.arrivalOffsets.single.inSeconds, 500);
+    });
+
+    test('reads the run document, and says whether anything was learned', () {
+      final plain = EstimateInputs.fromRun({'default_dwell_s': 120});
+      final learned = EstimateInputs.fromRun({
+        'speed_factor': 1.2,
+        'default_dwell_s': 120,
+        'dwell_by_key': {'a': 300},
+        'learned_legs': {'a>b': 90},
+      });
+
+      expect(plain.isLearned, isFalse);
+      expect(plain.defaultStopTime, const Duration(minutes: 2));
+      expect(learned.isLearned, isTrue);
+      expect(learned.dwellByKey, {'a': 300.0});
+      expect(learned.speedFactor, 1.2);
+    });
+
+    test('a default stop time replaces the built-in minute', () {
+      final estimate = DeliveryEstimate.forRun(
+        depot: depot,
+        stops: [a, b],
+        roadSeconds: road,
+        defaultStopTime: const Duration(minutes: 3),
+      );
+
+      expect(estimate.dwell, const Duration(minutes: 6));
+    });
+  });
 }

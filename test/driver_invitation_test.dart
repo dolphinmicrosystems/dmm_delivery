@@ -445,4 +445,31 @@ void main() {
       expect(summary, 'No invites pending acceptance');
     });
   });
+
+  group('the 14-in-14 resend limit agrees with firestore.rules windowOk()', () {
+    DriverInvitation withCounters({required int count, required Duration windowAge}) => DriverInvitation(
+      email: 'driver@gmail.com',
+      now: now,
+      invitedAt: now.subtract(const Duration(days: 2)),
+      expiresAt: now.subtract(const Duration(days: 1)),
+      inviteCount14d: count,
+      firstInviteInWindowAt: now.subtract(windowAge),
+    );
+
+    test('13 invites in the window still allows one more', () {
+      expect(withCounters(count: 13, windowAge: const Duration(days: 5)).canResend, isTrue);
+    });
+
+    test('14 invites in a live window blocks, and says when it opens again', () {
+      final full = withCounters(count: 14, windowAge: const Duration(days: 5));
+      expect(full.canResend, isFalse);
+      expect(full.resendAvailableAt, now.add(const Duration(days: 9, seconds: 1)));
+    });
+
+    test('once the window has run out, 14 no longer blocks', () {
+      final stale = withCounters(count: 14, windowAge: const Duration(days: 20));
+      expect(stale.canResend, isTrue);
+      expect(stale.resendAvailableAt, isNull);
+    });
+  });
 }

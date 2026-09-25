@@ -32,7 +32,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (237 tests, all passing)
+- Run all tests: `flutter test` (247 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -104,6 +104,10 @@ RunSheetReviewScreen   → reads delivery_run/{runId}/delivery_stop (seq_order),
                          + tap-a-pin + remove-a-stop + per-product load-out totals
                          + editable route name;
                          writes status (+ manual_order, route_name/route_name_source) back
+RouteMapScreen         → circuits/{roundKey} → delivery_run/{latest} (streamed: road path, times) + its
+                         stops (excluded ones filtered out). Long-press/handle to drag, ✕ to remove, Undo;
+                         saved at once by RouteEditor (seq_order/excluded + order_revision +1), after which
+                         the backend's refresh-run redraws the road and re-times the route
 OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → RouteMapScreen;
                          long-press a card to rename (round/round_source) or delete
 OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
@@ -116,6 +120,8 @@ DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-writte
                            runs, days a colleague covers) and "Schedule a run"
                          + vehicles (VehicleService: assign / change / remove / add, one per driver)
 OwnerSettingsScreen    → (menu) user_profiles/{uid}, the account card → OwnerProfileScreen
+                         + app_settings/invitations.default_stop_seconds ("Time at each stop": what
+                         an unlearned address costs in every estimate)
                          + app_settings/invitations (the invitation deadline: how long a driver
                          has to accept; says on screen that it stops mattering once they sign in)
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
@@ -215,8 +221,11 @@ its own when the backend goes real. See plan.md's table before assuming a number
   their ids (`_unlocatedIds`) to `manual_order`: leaving them out would tell `confirm_run_sheet_upload`
   to remove them.
 - **`DeliveryEstimate` mirrors the backend's `domain/travel_time.py`**, the way `DepotLocator.addressKey`
-  mirrors `address_key`: 60 s per place, straight line × 1.35 at 30 km/h, with the run document's
-  `learned_legs` taking priority. `test/delivery_estimate_test.dart` pins the numbers the Python produces;
+  mirrors `address_key`. A leg costs: a driver-measured `learned_legs` time (used as it stands - it is
+  already that driver), else Google's `road_legs` time × `speed_factor`, else straight line × 1.35 at
+  30 km/h × `speed_factor`. Each stop costs what `dwell_by_key` says, else the business's
+  `default_dwell_s`. `EstimateInputs.fromRun` reads all of that off the run document in one place, so a
+  dragged order re-estimates to the figures the backend wrote. `test/delivery_estimate_test.dart` pins the numbers the Python produces;
   change both sides together. The review screen re-estimates on every build, so dragging updates the
   total, and each `StopCard` shows its arrival offset. It is an offset, not a clock time: nothing records
   when the van leaves.
@@ -242,6 +251,10 @@ its own when the backend goes real. See plan.md's table before assuming a number
   null; a rename is **exactly** `driver_name` + `driver_name_source` and is a separate write precisely so
   it can apply to a driver who has already accepted. Routing a rename through the invite shape blanks
   their `accepted_at` and drops them off the roster.
+- **Invitations are written merged (`SetOptions(merge: true)`), never whole-document.** The rate-limit
+  counters on the document are server-owned (`backfill-invite-counters`), and the rules refuse any write
+  that sets, changes or drops one. A whole-document resend would drop them. `DriverInvitation.canResend` /
+  `resendAvailableAt` mirror the rules' `spacingOk` (1 day) and `windowOk` (14 in a live 14-day window).
 - **A resend aimed at an accepted driver would un-accept them.** `isInvite()` only constrains the
   *incoming* document, so the rules also check `resource.data.accepted_at == null` on the update path, and
   `DriverInvitation.canResend` disables the menu item. Both halves matter — the driver would keep their
@@ -294,6 +307,9 @@ its own when the backend goes real. See plan.md's table before assuming a number
   a live stream would rewrite fields under the cursor while the owner types. Its dirty test is
   `OwnerProfile.differsFrom` on parsed fields, **never** raw controller text, and `canPop` is refreshed by
   a `ListenableBuilder` over `Listenable.merge([...controllers])` because one controller isn't enough here.
+- **A `SnackBar` with an action must set `persist: false`** (and a `duration`). In current Flutter (3.47 here),
+  `persist` defaults to true whenever an action is present, so an "Undo" snackbar otherwise stays on
+  screen until tapped.
 - Debug tracing goes through `AppLog.auth` / `AppLog.owner` (`lib/util/app_log.dart`), which compiles away
   in release builds. Leave the calls in rather than adding and stripping them. Filter with
   `adb logcat | grep "BlueDot/"`.

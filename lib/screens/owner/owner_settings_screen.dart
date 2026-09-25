@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/driver_invitation.dart';
+import '../../models/run_time.dart';
 import '../../models/owner_profile.dart';
 import '../../services/driver_inviter.dart';
 import '../../state/auth_state.dart';
@@ -28,6 +29,10 @@ class OwnerSettingsScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           _AccountCard(authState: authState),
+          const SizedBox(height: 24),
+          const SectionLabel('Delivery times'),
+          const SizedBox(height: 8),
+          _StopTimeCard(authState: authState),
           const SizedBox(height: 24),
           const SectionLabel('Driver invitations'),
           const SizedBox(height: 8),
@@ -200,6 +205,73 @@ class _InvitationDeadlineCard extends StatelessWidget {
       await authState.setInvitationTtlDays(days);
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('invitation ttl write failed', error, stack, {'days': days});
+      messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
+    }
+  }
+}
+
+/// How long to allow at a stop before drivers have taught us the address.
+///
+/// The figure every route's "about 2 h 16 min" rests on until real deliveries
+/// arrive: a minute a stop across 60 stops is an hour of the estimate. Learned
+/// stop times replace it address by address, which is what the second line
+/// says - so an owner who sets three minutes today is not surprised when a
+/// route later says something else.
+class _StopTimeCard extends StatelessWidget {
+  const _StopTimeCard({required this.authState});
+
+  final AuthState authState;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: authState.defaultStopSeconds(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          AppLog.owner.error('stop time stream failed', snapshot.error, snapshot.stackTrace);
+        }
+        final seconds = snapshot.data ?? StopTime.fallbackSeconds;
+        return SurfaceCard(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Time at each stop', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              const Text(
+                'Used in route time estimates until your drivers have delivered to '
+                'an address a few times - then its own average is used.',
+                style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final preset in StopTime.presetSeconds)
+                    ChoiceChip(
+                      label: Text(StopTime.label(preset)),
+                      selected: preset == seconds,
+                      onSelected: (selected) {
+                        if (!selected || preset == seconds) return;
+                        _set(context, preset);
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _set(BuildContext context, int seconds) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await authState.setDefaultStopSeconds(seconds);
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('stop time write failed', error, stack, {'seconds': seconds});
       messenger.showSnackBar(SnackBar(content: Text(DriverInviter.errorMessage(error))));
     }
   }

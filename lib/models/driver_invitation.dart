@@ -173,9 +173,17 @@ class DriverInvitation {
     }
     final invited = invitedAt;
     if (invited != null && !_canResendBySpacing(invited)) return false;
+    return !_windowFull;
+  }
+
+  /// 14 invites in a window that has not yet run out - the same test as
+  /// `windowOk()` in firestore.rules, so the button and the rules agree.
+  bool get _windowFull {
     final count = inviteCount14d;
-    if (count != null && count >= 14) return false;
-    return true;
+    final windowStart = firstInviteInWindowAt;
+    if (count == null || count < 14) return false;
+    if (windowStart == null) return true;
+    return now.difference(windowStart) <= const Duration(days: 14);
   }
 
   /// When the next resend becomes available, or null if it is available now.
@@ -189,9 +197,9 @@ class DriverInvitation {
       final next = invited.add(const Duration(days: 1));
       if (next.isAfter(now)) return next;
     }
-    if (inviteCount14d != null && inviteCount14d! >= 14) {
-      final windowEnd = firstInviteInWindowAt?.add(const Duration(days: 14));
-      return windowEnd?.add(const Duration(days: 1));
+    if (_windowFull) {
+      // The rules allow it once the window is strictly more than 14 days old.
+      return firstInviteInWindowAt?.add(const Duration(days: 14, seconds: 1));
     }
     return null;
   }

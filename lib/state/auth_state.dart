@@ -7,6 +7,7 @@ import '../config/infra_config.dart';
 import '../models/auth_error_message.dart';
 import '../models/driver_invitation.dart';
 import '../models/owner_profile.dart';
+import '../models/run_time.dart';
 import '../util/app_log.dart';
 
 /// Who the signed-in Firebase user is, per the `role` custom claim the
@@ -262,8 +263,30 @@ class AuthState extends ChangeNotifier {
     AppLog.owner('setting invitation ttl', {'days': days});
     // One settings document per business - the invite window is a property
     // of this owner's operation, not of the app.
+    // Merged: the same document holds the default stop time, and a plain
+    // set() would clear it.
     await FirebaseFirestore.instance.collection('app_settings').doc(ownerUid!).set({
       'invitation_ttl_days': days,
-    });
+    }, SetOptions(merge: true));
+  }
+
+  /// How long to allow at a stop for an address nothing has been learned
+  /// about yet - the figure the whole estimate rests on until drivers start
+  /// delivering through the app.
+  Stream<int> defaultStopSeconds() {
+    return FirebaseFirestore.instance
+        .collection('app_settings')
+        .doc(ownerUid ?? '-')
+        .snapshots()
+        .map((snap) => StopTime.sanitize(snap.data()?['default_stop_seconds']));
+  }
+
+  /// Writes it. Applies to the next upload and to routes re-timed after it;
+  /// addresses drivers have already taught us keep their learned time.
+  Future<void> setDefaultStopSeconds(int seconds) async {
+    AppLog.owner('setting default stop time', {'seconds': seconds});
+    await FirebaseFirestore.instance.collection('app_settings').doc(ownerUid!).set({
+      'default_stop_seconds': seconds,
+    }, SetOptions(merge: true));
   }
 }

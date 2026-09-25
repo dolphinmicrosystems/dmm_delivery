@@ -3,6 +3,34 @@
 // A start time is stored as 24-hour "HH:MM" (`route_assignments.start_time`,
 // checked by that pattern in firestore.rules) and shown as "5:00 am".
 
+/// How long to allow at a stop before drivers have taught us the address.
+///
+/// The backend's `DWELL_SECONDS` is the same 60 s, and `firestore.rules` caps
+/// the setting at the range below - the same range a *learned* stop time is
+/// clamped to, so a default can't be set to something no measurement could be.
+class StopTime {
+  const StopTime._();
+
+  static const fallbackSeconds = 60;
+  static const minSeconds = 15;
+  static const maxSeconds = 900;
+  static const presetSeconds = [60, 120, 180, 300];
+
+  static int sanitize(Object? raw) {
+    final seconds = (raw as num?)?.toInt();
+    if (seconds == null || seconds < minSeconds || seconds > maxSeconds) return fallbackSeconds;
+    return seconds;
+  }
+
+  /// "1 min", "2 min 30", "45 sec".
+  static String label(int seconds) {
+    if (seconds < 60) return '$seconds sec';
+    final minutes = seconds ~/ 60;
+    final rest = seconds % 60;
+    return rest == 0 ? '$minutes min' : '$minutes min $rest';
+  }
+}
+
 /// "05:00" -> (5, 0); null for anything that isn't a valid 24-hour time.
 ({int hour, int minute})? parseStartTime(String? value) {
   final match = RegExp(r'^([01]\d|2[0-3]):([0-5]\d)$').firstMatch(value ?? '');

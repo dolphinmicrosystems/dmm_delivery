@@ -90,9 +90,10 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
   /// them out would read to confirm_run_sheet_upload as "remove these".
   List<String> _unlocatedIds = const [];
 
-  /// The run's `learned_legs`: driver-measured travel times between its own
-  /// addresses, which the time estimate prefers over distance.
-  Map<String, double> _learnedLegs = const {};
+  /// What the backend estimated this run with: learned leg times, each
+  /// address's stop time, the driver's pace. Re-used here so a dragged order
+  /// re-estimates to the same figures.
+  EstimateInputs _estimateInputs = const EstimateInputs();
 
   /// The run's road path for the order the backend proposed.
   RoadLegs _roadLegs = const RoadLegs();
@@ -226,8 +227,11 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
       stops: stops,
       depot: depot,
       unlocatedIds: unlocatedIds,
-      learnedLegs: DeliveryEstimate.learnedLegsFrom(run.data()?['learned_legs']),
       roadLegs: RoadLegs.fromRun(run.data()?['road_legs']),
+      estimateInputs: EstimateInputs.fromRun(
+        run.data(),
+        roadSeconds: roadSecondsFromRun(run.data()?['road_legs']),
+      ),
     );
   }
 
@@ -272,6 +276,10 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
     messenger.showSnackBar(
       SnackBar(
         content: Text('Removed ${stop.customerName.isEmpty ? stop.address : stop.customerName}'),
+        // Auto-closes like any snackbar: Flutter would otherwise keep one with
+        // an action up until tapped. The header's Undo stays for later.
+        persist: false,
+        duration: const Duration(seconds: 5),
         action: SnackBarAction(label: 'Undo', onPressed: () => _restoreStop(stop.id)),
       ),
     );
@@ -484,8 +492,8 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
             _depot = data.depot;
             _skipped = data.unlocatedIds.length;
             _unlocatedIds = data.unlocatedIds;
-            _learnedLegs = data.learnedLegs;
             _roadLegs = data.roadLegs;
+            _estimateInputs = data.estimateInputs;
           }
 
           return LayoutBuilder(
@@ -529,13 +537,9 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
     final unitCount = totals.fold(0, (running, total) => running + total.quantity);
     // Recomputed on every build, so a drag re-estimates at once. Sixty-odd
     // straight-line legs is nothing next to laying out the list itself.
-    // Road driving times where the backend has them, learned times over
-    // those - the same precedence process_run_sheet_upload.py estimates with.
-    final estimate = DeliveryEstimate.forRun(
-      depot: _depot,
-      stops: _stops,
-      learnedLegs: {..._roadLegs.seconds, ..._learnedLegs},
-    );
+    // The same figures the backend used, so dragging a stop moves the total
+    // without the number jumping when the screen is reopened.
+    final estimate = _estimateInputs.estimate(depot: _depot, stops: _stops);
 
     return ReorderableListView.builder(
       scrollController: _listController,
@@ -553,6 +557,7 @@ class _RunSheetReviewScreenState extends State<RunSheetReviewScreen> {
         totals: totals,
         skipped: _skipped,
         estimate: estimate,
+        estimateInputs: _estimateInputs,
         removed: _removed,
         onRestore: _restoreStop,
         depotResolved: _depot != null,
@@ -650,15 +655,15 @@ class _ReviewData {
     required this.stops,
     required this.depot,
     required this.unlocatedIds,
-    required this.learnedLegs,
     required this.roadLegs,
+    required this.estimateInputs,
   });
 
   final List<RunStop> stops;
   final LatLng? depot;
   final List<String> unlocatedIds;
-  final Map<String, double> learnedLegs;
   final RoadLegs roadLegs;
+  final EstimateInputs estimateInputs;
 }
 
 /// Everything above the draggable list: what this route is called, what
@@ -673,6 +678,7 @@ class _ReviewHeader extends StatelessWidget {
     required this.totals,
     required this.skipped,
     required this.estimate,
+    required this.estimateInputs,
     required this.removed,
     required this.onRestore,
     required this.depotResolved,
@@ -689,6 +695,7 @@ class _ReviewHeader extends StatelessWidget {
   final List<MilkTotal> totals;
   final int skipped;
   final DeliveryEstimate estimate;
+  final EstimateInputs estimateInputs;
 
   /// Stops the owner has taken off this run, newest first. Shown rather than
   /// hidden: a removal is not written until Confirm, so this panel is the
@@ -776,7 +783,7 @@ class _ReviewHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
-        DeliveryTimeCard(estimate: estimate, depotResolved: depotResolved),
+        DeliveryTimeCard(estimate: estimate, depotResolved: depotResolved, inputs: estimateInputs),
         // Not a warning - the opposite. It answers the question a re-upload
         // actually raises ("did I just lose the order I set last week?"),
         // which otherwise goes unanswered until a driver is out on the run.
