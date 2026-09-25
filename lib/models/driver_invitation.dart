@@ -315,7 +315,7 @@ class DriverInvitation {
 
   /// "aimee.grant@wae.co.nz" -> "Aimee Grant". The last resort, used only
   /// until somebody supplies a real name. Public and static because
-  /// `RiderBoardEntry` needs the identical guess - a driver spelled two ways
+  /// Every screen naming a driver needs the identical guess - a driver spelled two ways
   /// across two screens reads as two drivers.
   static String nameFromEmail(String email) {
     final local = email.split('@').first;

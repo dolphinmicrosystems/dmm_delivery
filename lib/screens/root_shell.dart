@@ -6,9 +6,9 @@ import '../theme/app_colors.dart';
 import '../util/app_log.dart';
 import 'owner/owner_drivers_screen.dart';
 import 'owner/owner_home_screen.dart';
-import 'owner/owner_maps_screen.dart';
 import 'owner/owner_menu_drawer.dart';
 import 'owner/owner_routes_screen.dart';
+import 'owner/runs_screen.dart';
 import 'rider/driver_menu_drawer.dart';
 import 'rider/rider_active_screen.dart';
 import 'rider/rider_earnings_screen.dart';
@@ -75,7 +75,7 @@ class _OwnerShellState extends State<_OwnerShell> {
         children: [
           OwnerHomeScreen(authState: widget.authState, onOpenRoutes: () => _selectTab(_routesTab)),
           OwnerRoutesScreen(authState: widget.authState),
-          OwnerMapsScreen(authState: widget.authState),
+          RunsScreen(authState: widget.authState),
           OwnerDriversScreen(authState: widget.authState),
         ],
       ),
@@ -85,7 +85,7 @@ class _OwnerShellState extends State<_OwnerShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.alt_route_rounded), label: 'Routes'),
-          NavigationDestination(icon: Icon(Icons.map_outlined), label: 'Maps'),
+          NavigationDestination(icon: Icon(Icons.local_shipping_outlined), label: 'Runs'),
           NavigationDestination(icon: Icon(Icons.people_alt_outlined), label: 'Drivers'),
         ],
       ),

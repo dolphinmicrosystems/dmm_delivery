@@ -32,7 +32,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (247 tests, all passing)
+- Run all tests: `flutter test` (227 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -56,7 +56,7 @@ needs the script.
 `test/` is six files of pure model + widget tests with **no Firebase, network or Firestore fakes** —
 models are constructed directly (`RunStop(...)`, `StopItem(...)`), and widget tests pump `StopCard` /
 `RoutePreviewMap` / the reorderable list and drive real gestures. Nothing exercises `RunStop.fromDoc`,
-`RiderBoardApi` or any `StreamBuilder`, so **logic worth testing has to live in a model or widget the test
+any `StreamBuilder`, so **logic worth testing has to live in a model or widget the test
 can construct by hand** — put aggregation and parsing there rather than inside a screen's `build`. Test
 fixtures use numbers from a real "South Runsheet" export; keep it that way over inventing quantities.
 
@@ -69,7 +69,7 @@ rewrites it from *live* GCP state, not from Terraform or the backend repo's file
 | --- | --- |
 | `runSheetsBucket` | the `process-run-sheet-upload` function's own Storage trigger (name-matching buckets is unsafe — a stale `run-sheets-*` bucket exists) |
 | `googleSignInServerClientId` | Firebase Auth's Google IdP config (not Terraform-managed) |
-| `riderBoardUrl` | the `rider-board` function's URL; **empty when undeployed**, so callers must check rather than parse it |
+| `riderBoardUrl` | the `rider-board` function's URL. **Nothing in the app reads it any more** (the Runs tab replaced the board); still generated while the function is deployed |
 
 If `GCP_PROJECT_ID` disagrees with the committed `lib/firebase_options.dart`, the script runs
 `flutterfire configure` itself. That branch must stay local and human-committed — in CI those writes die
@@ -90,7 +90,7 @@ with the ephemeral workspace.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
 `_DriverShell` (the old 3-tab mock: Orders/Active/Earnings, driven by `AppState`) and *everyone else,
-including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Maps/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
+including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
 
@@ -110,8 +110,9 @@ RouteMapScreen         → circuits/{roundKey} → delivery_run/{latest} (stream
                          the backend's refresh-run redraws the road and re-times the route
 OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → RouteMapScreen;
                          long-press a card to rename (round/round_source) or delete
-OwnerMapsScreen        → RiderBoardApi → rider-board function → RiderBoardEntry cards
-OwnerRiderScreen       → RiderBoardApi.fetchRiderMap → encoded polyline + position
+RunsScreen             → delivery_run (owner_uid, status == sequenced) + circuits + route_assignments +
+                         driver_invitations → RunListing cards in Upcoming / Today / Past tabs
+RunDetailScreen        → one delivery_run + its stops, streamed: map with delivered stops ticked, progress
 OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
                          DriverAccessApi → driver-access function (remove / restore);
                          tap a row → DriverDetailScreen
@@ -132,20 +133,23 @@ Collections touched from the client: `circuits` (read, delete, and a rename limi
 `addresses` (read-only geocode cache), `stop_instructions` (owner override field only — Firestore rules
 allow that one field directly, no function needed), `app_settings/invitations` (invitation TTL), `user_profiles/{uid}` (own profile; owners may read any).
 
-**The rider-board endpoint is IAM-open by necessity.** Cloud Run IAM cannot evaluate a Firebase token, so
-`allUsers` opens the gate and the function's own `_require_owner()` is the actual authorization.
-`RiderBoardApi` therefore sends a **freshly fetched** ID token per request (`getIdToken()` — tokens expire
-hourly), times out at 60s, and converts every failure into a `RiderBoardException` whose message is
-already fit to show a person.
+**The Runs tab is real data only.** It replaced the "Maps" board, which was built on the rider-board
+function's mock route shape and randomised driver position; that board, `RiderBoardApi` and its models
+are deleted.
+- **A run** is one route's deliveries for one day: the confirmed run sheet, dated by
+  `delivery_run.delivery_date` (the sheet's own "DD/MM/YYYY", parsed by `parseSheetDate`).
+- **`RunListing.phase` sorts runs into tabs:** finished runs are past; otherwise the date decides.
+  `status` gives not started / on the road / done / not finished / not run.
+- **Progress** (`delivered_count`, `started_at`, `last_delivered_at`, `completed_at`, `next_stop`) is written
+  onto the run by the backend on every stop marked delivered, so a list costs one read per run.
+- **Driver and start time:** `run.rider_id`, else the route's schedule for that day
+  (`RouteAssignment.activeAt` at midday).
+- **Excluded from the list:** runs of deleted routes, and `superseded` runs (replaced by a same-day
+  re-upload).
+- **No van position is drawn:** nothing reports GPS yet, and the screen says so.
 
-**Map data is data, never an image.** The server returns an encoded polyline (with `shape_format` — a
-precision-6 shape decoded as 5 lands ten degrees away, silently); the client owns the viewport and renders
-tiles/overlay/marker itself via `flutter_map` + CARTO basemap tiles (`MapConfig`, which every tile layer
-in the app reads — see the key note below).
-
-**Much of the board is mock, and labelled as such in the payload** (`demo_mode`, `route.source`,
-`position.source`). The UI's "Mock route & position" badge is driven by those fields, so it disappears on
-its own when the backend goes real. See plan.md's table before assuming a number is production data.
+**Map data is data, never an image.** The client owns the viewport and renders tiles, overlays and
+markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps below).
 
 ## Conventions and traps
 

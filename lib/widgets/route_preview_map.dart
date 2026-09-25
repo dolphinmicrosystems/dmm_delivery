@@ -57,6 +57,7 @@ class RoutePreviewMap extends StatefulWidget {
     this.expanded = false,
     this.onToggleExpanded,
     this.attributionAtTop = false,
+    this.deliveredIds = const {},
   });
 
   final List<RunStop> stops;
@@ -90,6 +91,10 @@ class RoutePreviewMap extends StatefulWidget {
   /// Moves the map credits to the top, for a host that pulls a sheet up over
   /// the map's lower edge - see [BasemapAttribution.atTop].
   final bool attributionAtTop;
+
+  /// Stops already delivered on this run (by `RunStop.id`), drawn in the
+  /// success colour. Empty everywhere but a run being watched.
+  final Set<String> deliveredIds;
 
   @override
   State<RoutePreviewMap> createState() => _RoutePreviewMapState();
@@ -213,6 +218,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
     final highlight = widget.highlight;
     final isHighlighted = highlight != null && highlight.stopId == stop.id;
     final onTap = widget.onStopTap == null ? null : () => widget.onStopTap!(index);
+    final delivered = widget.deliveredIds.contains(stop.id);
     // The stop the owner asked about is drawn in full whatever the zoom - a
     // pulsing dot is not an answer to "which one is this?".
     if (isHighlighted || _tier == _PinTier.full) {
@@ -225,7 +231,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
           onTap: onTap,
           child: isHighlighted
               ? _PulsingPin(number: index + 1, tick: highlight.tick)
-              : StopPin(number: index + 1),
+              : StopPin(number: index + 1, delivered: delivered),
         ),
       );
     }
@@ -242,7 +248,11 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
         // so a tap on a zoomed-out map does not need a fingertip placed to the
         // pixel.
         behavior: HitTestBehavior.opaque,
-        child: Center(child: compact ? StopPin(number: index + 1, compact: true) : const _StopDot()),
+        child: Center(
+          child: compact
+              ? StopPin(number: index + 1, compact: true, delivered: delivered)
+              : _StopDot(delivered: delivered),
+        ),
       ),
     );
   }
@@ -435,7 +445,9 @@ class _ControlButton extends StatelessWidget {
 /// A stop on a zoomed-out map: position only. The number comes back once the
 /// map is close enough for numbers to be told apart - see [_PinTier].
 class _StopDot extends StatelessWidget {
-  const _StopDot();
+  const _StopDot({this.delivered = false});
+
+  final bool delivered;
 
   @override
   Widget build(BuildContext context) {
@@ -443,7 +455,7 @@ class _StopDot extends StatelessWidget {
       width: 12,
       height: 12,
       decoration: BoxDecoration(
-        color: AppColors.brand,
+        color: delivered ? AppColors.success : AppColors.brand,
         shape: BoxShape.circle,
         border: Border.all(color: Colors.white, width: 2),
         boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))],
@@ -546,24 +558,35 @@ class _PulsingPinState extends State<_PulsingPin> with SingleTickerProviderState
 /// the stop the owner picked out of the list still reads as picked once the
 /// pulse has finished.
 class StopPin extends StatelessWidget {
-  const StopPin({super.key, required this.number, this.compact = false, this.selected = false});
+  const StopPin({
+    super.key,
+    required this.number,
+    this.compact = false,
+    this.selected = false,
+    this.delivered = false,
+  });
 
   final int number;
   final bool compact;
   final bool selected;
 
+  /// Already delivered on this run: drawn in the success colour, so a run in
+  /// progress reads at a glance as done-behind and to-do-ahead.
+  final bool delivered;
+
   @override
   Widget build(BuildContext context) {
     final size = compact ? 28.0 : 32.0;
-    final fill = selected ? AppColors.brand : Colors.white;
-    final ink = selected ? Colors.white : AppColors.brand;
+    final tone = delivered ? AppColors.success : AppColors.brand;
+    final fill = selected ? tone : Colors.white;
+    final ink = selected ? Colors.white : tone;
     final badge = Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         color: fill,
         borderRadius: BorderRadius.circular(size * 0.3),
-        border: Border.all(color: selected ? Colors.white : AppColors.brand, width: 2),
+        border: Border.all(color: selected ? Colors.white : tone, width: 2),
         boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
       ),
       alignment: Alignment.center,
@@ -589,7 +612,7 @@ class StopPin extends StatelessWidget {
                 height: 12,
                 decoration: BoxDecoration(
                   color: fill,
-                  border: Border.all(color: selected ? Colors.white : AppColors.brand, width: 2),
+                  border: Border.all(color: selected ? Colors.white : tone, width: 2),
                 ),
               ),
             ),
