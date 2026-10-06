@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/push_notifications.dart';
 import '../../state/auth_state.dart';
 import '../../util/app_log.dart';
 import '../root_shell.dart';
@@ -80,6 +81,16 @@ class AuthGate extends StatelessWidget {
             );
           case AuthStatus.signedIn:
             AppLog.auth('AuthGate -> RootShell (signed in)', {'role': authState.role?.name});
+            // Once signed in, register this phone for the person's
+            // notifications. Idempotent per user, so rebuilds cost nothing.
+            final uid = authState.user?.uid;
+            if (uid != null) {
+              PushNotifications.instance.register(
+                uid: uid,
+                ownerUid: authState.ownerUid,
+                role: authState.role == AuthRole.driver ? 'rider' : 'owner',
+              );
+            }
             return RootShell(authState: authState);
         }
       },

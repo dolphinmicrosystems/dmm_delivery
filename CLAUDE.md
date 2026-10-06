@@ -319,6 +319,26 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
   `adb logcat | grep "BlueDot/"`.
 - Fields are logged as `key=value` maps, and secrets are logged by *presence* (`hasIdToken: true`), never
   by value.
+- **Push notifications** (`lib/services/push_notifications.dart`):
+  - **Registration.** `AuthGate` registers the phone on sign-in (permission prompt on Android 13+, token
+    saved to `user_devices/{uid}/tokens/{token}`). `AuthState.signOut` unregisters it *before* signing
+    out, while the rules still know who is asking. The backend's `notify-assignment` sends to these tokens.
+  - **Brand look.** The resource names `ic_stat_bluedot` (monochrome status-bar icon, `res/drawable`),
+    `bluedot_large`, `@color/bluedot_brand` and channel id `assignments` are a contract with
+    `dmm-delivery-app/src/dmm_delivery/adapters/fcm_user_push.py` and the manifest's FCM defaults. Don't
+    rename them on one side only.
+  - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished) and
+    `live_runs` (low importance, silent). Their ids are a contract with the backend.
+  - **The live run notification** is sent as data, and the app draws it (`drawLiveRun`). It is ongoing,
+    shows a progress bar and a chronometer from the run's start, uses the run id as its tag (so each run
+    updates in place), and times out 30 minutes after its last update so it can't get stuck. When the app
+    is closed, `pushBackgroundHandler` draws it (registered in `main()`; it runs in its own isolate, so it
+    initializes the plugin itself). Sign-out clears every notification.
+  - **While the app is open**, Android does not draw a push. `_showInForeground` draws it through
+    `flutter_local_notifications`, which needs core library desugaring (`android/app/build.gradle.kts`).
+  - **The FlutterFire packages move together.** Adding `firebase_messaging` pulled `firebase_core` ahead of
+    `firebase_auth`, and the APK stopped compiling (`customAuthDomain` not found). Upgrade them as a
+    set, and run `flutter clean` if the build then can't find a plugin class.
 
 ## UI
 

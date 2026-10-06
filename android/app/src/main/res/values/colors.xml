@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppColors.brand: tints the notification icon and accent. -->
+    <color name="bluedot_brand">#1A56DB</color>
+</resources>

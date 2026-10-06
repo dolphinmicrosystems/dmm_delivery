@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for Blue Dot notifications: the logo's dot and halo as a
+     single-colour silhouette, because Android draws status-bar icons from
+     their alpha alone and tints them itself. The full-colour logo is the
+     notification's large icon (drawable-nodpi/bluedot_large.png). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Halo: a ring -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,3.5a8.5,8.5 0,1 1,0 17a8.5,8.5 0,1 1,0 -17zM12,5.5a6.5,6.5 0,1 0,0 13a6.5,6.5 0,1 0,0 -13z" />
+    <!-- The dot -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,7.5a4.5,4.5 0,1 1,0 9a4.5,4.5 0,1 1,0 -9z" />
+</vector>

@@ -8,6 +8,7 @@ import '../models/auth_error_message.dart';
 import '../models/driver_invitation.dart';
 import '../models/owner_profile.dart';
 import '../models/run_time.dart';
+import '../services/push_notifications.dart';
 import '../util/app_log.dart';
 
 /// Who the signed-in Firebase user is, per the `role` custom claim the
@@ -163,6 +164,9 @@ class AuthState extends ChangeNotifier {
 
   Future<void> signOut() async {
     AppLog.auth('signOut requested', {'uid': user?.uid});
+    // Before signing out, while the rules still know who is asking: this
+    // phone stops receiving this person's notifications.
+    await PushNotifications.instance.unregister();
     await FirebaseAuth.instance.signOut();
   }
 
