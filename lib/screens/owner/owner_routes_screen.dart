@@ -238,6 +238,7 @@ class _CircuitCardState extends State<_CircuitCard> {
         effectiveFrom: choice.date,
         driver: choice.driver,
         startTime: choice.startTime,
+        endTime: choice.endTime,
         oneDay: choice.oneDay,
       );
       if (mounted) setState(() => _revealActions = false);

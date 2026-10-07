@@ -83,7 +83,7 @@ class _Data {
   /// Who drives [run] and from what time. The driver stamped on the run at
   /// confirm wins; otherwise it is whoever the route's schedule names for
   /// that day - which is also where the start time always comes from.
-  ({String? driver, String? startTime}) crewFor(RunListing run) {
+  ({String? driver, String? startTime, String? endTime}) crewFor(RunListing run) {
     final day = run.date ?? DateTime.now();
     final scheduled = RouteAssignment.activeAt(
       assignmentsByRoute[run.roundKey] ?? const [],
@@ -93,6 +93,7 @@ class _Data {
     return (
       driver: uid == null ? null : (driverNames[uid] ?? scheduled?.driverName),
       startTime: scheduled?.startTime,
+      endTime: scheduled?.endTime,
     );
   }
 }
@@ -202,6 +203,7 @@ class _RunList extends StatelessWidget {
           now: now,
           driver: crew.driver,
           startTime: crew.startTime,
+          endTime: crew.endTime,
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => RunDetailScreen(
@@ -210,6 +212,7 @@ class _RunList extends StatelessWidget {
                 routeName: run.routeName ?? 'Run',
                 driver: crew.driver,
                 startTime: crew.startTime,
+                endTime: crew.endTime,
               ),
             ),
           ),
@@ -225,6 +228,7 @@ class _RunCard extends StatelessWidget {
     required this.now,
     required this.driver,
     required this.startTime,
+    required this.endTime,
     required this.onTap,
   });
 
@@ -232,6 +236,7 @@ class _RunCard extends StatelessWidget {
   final DateTime now;
   final String? driver;
   final String? startTime;
+  final String? endTime;
   final VoidCallback onTap;
 
   @override
@@ -243,7 +248,9 @@ class _RunCard extends StatelessWidget {
       RunStatus.unfinished || RunStatus.notRun => (AppColors.warning, const Color(0x1AE4A83A)),
       RunStatus.notStarted => (AppColors.inkMuted, AppColors.surfaceMuted),
     };
-    final finish = expectedFinish(startTime, run.estimatedTotal);
+    // The owner's own finish time when they set one, else start + estimate.
+    final finish =
+        endTime == null ? expectedFinish(startTime, run.estimatedTotal) : formatStartTime(endTime!);
 
     return InkWell(
       onTap: onTap,
@@ -267,8 +274,8 @@ class _RunCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               [
-                _dayLabel(run.date, now),
-                if (startTime != null) formatStartTime(startTime!),
+                relativeDayLabel(run.date, now),
+                ?formatWindow(startTime, endTime),
                 driver ?? 'No driver',
               ].join(' · '),
               style: TextStyle(
@@ -313,16 +320,5 @@ class _RunCard extends StatelessWidget {
             '${estimate == null ? '' : ' · about ${DeliveryEstimate.format(estimate)}'}'
             '${finish == null ? '' : ', back ~$finish'}',
     };
-  }
-
-  static String _dayLabel(DateTime? date, DateTime now) {
-    if (date == null) return 'No date';
-    final today = DateTime(now.year, now.month, now.day);
-    final difference = date.difference(today).inDays;
-    if (difference == 0) return 'Today';
-    if (difference == 1) return 'Tomorrow';
-    if (difference == -1) return 'Yesterday';
-    final weekday = const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][date.weekday - 1];
-    return '$weekday ${formatShortDate(date, thisYear: now.year)}';
   }
 }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'config/infra_config.dart';
 import 'firebase_options.dart';
 import 'notifications/push_notifications.dart';
+import 'observability/crash_reporting.dart';
 import 'screens/auth/auth_gate.dart';
 import 'state/auth_state.dart';
 import 'theme/app_theme.dart';
@@ -15,6 +16,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final options = DefaultFirebaseOptions.currentPlatform;
   await Firebase.initializeApp(options: options);
+  // Crashes and caught errors from release builds (off in debug).
+  await CrashReporting.start();
   // Before runApp, as Firebase requires: draws the live run notification
   // while the app is closed.
   if (!kIsWeb) FirebaseMessaging.onBackgroundMessage(pushBackgroundHandler);

@@ -108,3 +108,16 @@ String formatShortDate(DateTime date, {int? thisYear}) {
   final dayMonth = '${date.day} ${_months[date.month - 1]}';
   return date.year == thisYear ? dayMonth : '$dayMonth ${date.year}';
 }
+
+/// "Today", "Tomorrow", "Yesterday", else "Thu 8 Oct" - how the Runs tabs
+/// (owner's and driver's) name a run's day.
+String relativeDayLabel(DateTime? date, DateTime now) {
+  if (date == null) return 'No date';
+  final today = DateTime(now.year, now.month, now.day);
+  final difference = DateTime(date.year, date.month, date.day).difference(today).inDays;
+  if (difference == 0) return 'Today';
+  if (difference == 1) return 'Tomorrow';
+  if (difference == -1) return 'Yesterday';
+  final weekday = const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][date.weekday - 1];
+  return '$weekday ${formatShortDate(date, thisYear: now.year)}';
+}

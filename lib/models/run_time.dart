@@ -63,3 +63,30 @@ String? expectedFinish(String? startTime, Duration? duration) {
   final finish = formatClock((total ~/ 60) % 24, total % 60);
   return total >= 24 * 60 ? '$finish next day' : finish;
 }
+
+/// "8:00 pm - 10:44 pm" for a start and an end, "8:00 pm" for a start alone,
+/// null for neither.
+String? formatWindow(String? startTime, String? endTime) {
+  if (startTime == null) return null;
+  final start = formatStartTime(startTime);
+  return endTime == null ? start : '$start - ${formatStartTime(endTime)}';
+}
+
+/// The "HH:MM" [duration] after [startTime], wrapping past midnight - the end
+/// time the scheduling sheet suggests from the route's estimate.
+String? addToStartTime(String? startTime, Duration? duration) {
+  final start = parseStartTime(startTime);
+  if (start == null || duration == null) return null;
+  final total = start.hour * 60 + start.minute + (duration.inSeconds / 60).round();
+  return encodeStartTime((total ~/ 60) % 24, total % 60);
+}
+
+/// How long the window from [startTime] to [endTime] is (an end at or before
+/// the start being the next morning), or null if either is missing.
+Duration? windowLength(String? startTime, String? endTime) {
+  final start = parseStartTime(startTime), end = parseStartTime(endTime);
+  if (start == null || end == null) return null;
+  var minutes = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute);
+  if (minutes <= 0) minutes += 24 * 60;
+  return Duration(minutes: minutes);
+}

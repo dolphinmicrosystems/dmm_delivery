@@ -154,16 +154,23 @@ void main() {
   group('one-day runs and start times', () {
     // Same cases as the backend's tests/domain/test_route_assignment.py -
     // the two resolve the same rows, and must agree.
-    RouteAssignment row(String? driver, int day, {bool oneDay = false, String? start, int? created}) =>
-        RouteAssignment(
-          roundKey: 'south',
-          driverUid: driver,
-          driverName: driver,
-          effectiveFrom: DateTime(2026, 9, day),
-          createdAt: DateTime(2026, 9, created ?? day),
-          startTime: start,
-          oneDay: oneDay,
-        );
+    RouteAssignment row(
+      String? driver,
+      int day, {
+      bool oneDay = false,
+      String? start,
+      String? end,
+      int? created,
+    }) => RouteAssignment(
+      roundKey: 'south',
+      driverUid: driver,
+      driverName: driver,
+      effectiveFrom: DateTime(2026, 9, day),
+      createdAt: DateTime(2026, 9, created ?? day),
+      startTime: start,
+      endTime: end,
+      oneDay: oneDay,
+    );
 
     test('applies on its day, and the regular driver is back the next', () {
       final rows = [row('pawan', 1, start: '05:00'), row('ben', 25, oneDay: true, created: 20)];
@@ -179,6 +186,18 @@ void main() {
 
       expect(RouteAssignment.activeAt(keeps, DateTime(2026, 9, 25, 3))!.startTime, '05:00');
       expect(RouteAssignment.activeAt(sets, DateTime(2026, 9, 25, 3))!.startTime, '04:30');
+    });
+
+    test('a cover with no times of its own keeps the regular start and end, as a pair', () {
+      final keeps = [row('pawan', 1, start: '05:00', end: '07:44'), row('ben', 25, oneDay: true)];
+      final sets = [row('pawan', 1, start: '05:00', end: '07:44'), row('ben', 25, oneDay: true, start: '04:30')];
+
+      final kept = RouteAssignment.activeAt(keeps, DateTime(2026, 9, 25, 3))!;
+      expect((kept.startTime, kept.endTime), ('05:00', '07:44'));
+      // Its own start without an end: no end, rather than the regular one
+      // that belonged to a different start.
+      final own = RouteAssignment.activeAt(sets, DateTime(2026, 9, 25, 3))!;
+      expect((own.startTime, own.endTime), ('04:30', null));
     });
 
     test('the later of two one-day runs for the same day wins', () {
@@ -205,6 +224,44 @@ void main() {
       final rows = [row('pawan', 1, start: '05:00'), row('ben', 25, oneDay: true)];
       expect(RouteAssignment.driverLabel(rows, DateTime(2026, 9, 25, 3)), 'ben · 5:00 am');
       expect(RouteAssignment.driverLabel(rows, DateTime(2026, 9, 26, 3)), 'pawan · 5:00 am');
+    });
+  });
+
+  group('cancelling a booking', () {
+    RouteAssignment row(String? driver, int day, {bool oneDay = false, String? start, String? end}) =>
+        RouteAssignment(
+          id: '$driver-$day-$oneDay',
+          roundKey: 'run2',
+          driverUid: driver,
+          driverName: driver,
+          effectiveFrom: DateTime(2026, 10, day),
+          createdAt: DateTime(2026, 10, day),
+          startTime: start,
+          endTime: end,
+          oneDay: oneDay,
+        );
+
+    test("a day's cover goes back to the regular driver, at their usual times", () {
+      final cover = row('sonia', 7, oneDay: true, start: '20:00');
+      final rows = [row('pawan', 1, start: '05:00', end: '07:44'), cover];
+
+      final back = RouteAssignment.replacementFor(cover, rows);
+      // No times of its own: the one-day row then borrows the regular ones.
+      expect((back.driverUid, back.startTime, back.endTime), ('pawan', null, null));
+    });
+
+    test('a cover on a route with no regular driver leaves the day with nobody', () {
+      final cover = row('sonia', 7, oneDay: true);
+
+      expect(RouteAssignment.replacementFor(cover, [cover]).driverUid, isNull);
+    });
+
+    test('a later handover goes back to whoever had the route the day before', () {
+      final handover = row('sonia', 12, start: '20:00');
+      final rows = [row('pawan', 1, start: '05:00', end: '07:44'), handover];
+
+      final back = RouteAssignment.replacementFor(handover, rows);
+      expect((back.driverUid, back.startTime, back.endTime), ('pawan', '05:00', '07:44'));
     });
   });
 }

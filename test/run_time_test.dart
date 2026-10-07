@@ -43,4 +43,24 @@ void main() {
       expect(StopTime.label(150), '2 min 30');
     });
   });
+
+  group('start and end times', () {
+    test('a window reads as people say it', () {
+      expect(formatWindow('20:00', '22:44'), '8:00 pm - 10:44 pm');
+      expect(formatWindow('05:00', null), '5:00 am');
+      expect(formatWindow(null, '07:00'), isNull);
+    });
+
+    test('the suggested end is the start plus the estimate, past midnight too', () {
+      expect(addToStartTime('20:00', const Duration(hours: 2, minutes: 44)), '22:44');
+      expect(addToStartTime('22:30', const Duration(hours: 2)), '00:30');
+      expect(addToStartTime(null, const Duration(hours: 2)), isNull);
+    });
+
+    test('an end at or before the start is the next morning', () {
+      expect(windowLength('20:00', '22:44'), const Duration(hours: 2, minutes: 44));
+      expect(windowLength('22:30', '00:30'), const Duration(hours: 2));
+      expect(windowLength('05:00', null), isNull);
+    });
+  });
 }

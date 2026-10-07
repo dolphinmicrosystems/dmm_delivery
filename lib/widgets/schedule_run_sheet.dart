@@ -20,6 +20,7 @@ class ScheduleChoice {
     required this.oneDay,
     this.driver,
     this.startTime,
+    this.endTime,
   });
 
   final String roundKey;
@@ -30,14 +31,20 @@ class ScheduleChoice {
   /// Local midnight of the chosen day.
   final DateTime date;
 
-  /// "HH:MM", or null to keep the time that applied before.
+  /// "HH:MM", or null to keep the times that applied before.
   final String? startTime;
+
+  /// When the owner expects the run finished, "HH:MM" (at or before the
+  /// start: the next morning). Only with a [startTime].
+  final String? endTime;
 
   final bool oneDay;
 }
 
 /// Schedules a run: who drives which route, from (or only on) which day, and
-/// at what time - with how long the route takes and when it should finish.
+/// from what time until what time. The finish starts as the start plus the
+/// route's estimate; the owner sets it to whatever they expect, and the sheet
+/// says when that is shorter than the route usually takes.
 ///
 /// Opened two ways, and the same sheet either way:
 ///  * from a route on the Routes tab - the route is fixed, pick the driver;
@@ -106,6 +113,11 @@ class _ScheduleRunSheet extends StatefulWidget {
 class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
   late DateTime _date = _today();
   late String? _startTime = widget.current?.startTime;
+
+  /// What the owner chose for the finish; null until they do, while it
+  /// follows the start plus the estimate ([_suggestedEnd]).
+  late String? _endTime = widget.current?.endTime;
+  Duration? _estimate;
   bool _oneDay = false;
   String? _roundKey;
   String? _routeName;
@@ -117,7 +129,22 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
     _roundKey = widget.fixedRoundKey;
     _routeName = widget.fixedRouteName;
     _driver = widget.fixedDriver;
+    _loadEstimate();
   }
+
+  /// The route's estimate, for the suggested finish and the warning.
+  void _loadEstimate() {
+    final key = _roundKey;
+    if (key == null) return;
+    RouteEstimates.forRoute(key).then((estimate) {
+      if (mounted && key == _roundKey) setState(() => _estimate = estimate);
+    });
+  }
+
+  String? get _suggestedEnd => addToStartTime(_startTime, _estimate);
+
+  /// The finish shown and saved: the owner's, else the suggestion.
+  String? get _end => _startTime == null ? null : (_endTime ?? _suggestedEnd);
 
   static DateTime _today() {
     final now = DateTime.now();
@@ -149,9 +176,26 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
     final current = parseStartTime(_startTime);
     final picked = await showTimePicker(
       context: context,
+      helpText: 'Start time',
       initialTime: TimeOfDay(hour: current?.hour ?? 5, minute: current?.minute ?? 0),
     );
-    if (picked != null && mounted) setState(() => _startTime = encodeStartTime(picked.hour, picked.minute));
+    if (picked == null || !mounted) return;
+    setState(() {
+      final previousSuggestion = _suggestedEnd;
+      _startTime = encodeStartTime(picked.hour, picked.minute);
+      // A finish that was only ever the suggestion moves with the start.
+      if (_endTime == previousSuggestion) _endTime = null;
+    });
+  }
+
+  Future<void> _pickEnd() async {
+    final current = parseStartTime(_end);
+    final picked = await showTimePicker(
+      context: context,
+      helpText: 'Finish by',
+      initialTime: TimeOfDay(hour: current?.hour ?? 7, minute: current?.minute ?? 0),
+    );
+    if (picked != null && mounted) setState(() => _endTime = encodeStartTime(picked.hour, picked.minute));
   }
 
   bool get _fixedRoute => widget.fixedRoundKey != null;
@@ -166,6 +210,7 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
         driver: remove ? null : _driver,
         date: _date,
         startTime: _startTime,
+        endTime: _end,
         oneDay: _oneDay,
       ),
     );
@@ -199,21 +244,32 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
               style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2),
             ),
             const SizedBox(height: 12),
-            // When: day, start time, and whether it repeats.
+            // When: day, start and finish, and whether it repeats.
+            OutlinedButton.icon(
+              onPressed: _pickDate,
+              icon: const Icon(Icons.event_rounded, size: 18),
+              label: Text(_dateLabel, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickDate,
-                    icon: const Icon(Icons.event_rounded, size: 18),
-                    label: Text(_dateLabel, overflow: TextOverflow.ellipsis),
+                  child: _TimeButton(
+                    label: 'Start',
+                    value: _startTime == null ? 'Set' : formatStartTime(_startTime!),
+                    onPressed: _pickTime,
                   ),
                 ),
                 const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _pickTime,
-                  icon: const Icon(Icons.schedule_rounded, size: 18),
-                  label: Text(_startTime == null ? 'Start time' : formatStartTime(_startTime!)),
+                Expanded(
+                  child: _TimeButton(
+                    label: 'Finish by',
+                    value: _end == null
+                        ? (_startTime == null ? 'After start' : 'Set')
+                        : formatStartTime(_end!),
+                    // The finish belongs to a start: pick that first.
+                    onPressed: _startTime == null ? null : _pickEnd,
+                  ),
                 ),
               ],
             ),
@@ -235,10 +291,14 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
                   ? _RoutePicker(
                       authState: widget.authState,
                       selected: _roundKey,
-                      onSelected: (key, name) => setState(() {
-                        _roundKey = key;
-                        _routeName = name;
-                      }),
+                      onSelected: (key, name) {
+                        setState(() {
+                          _roundKey = key;
+                          _routeName = name;
+                          _estimate = null;
+                        });
+                        _loadEstimate();
+                      },
                     )
                   : _DriverPicker(
                       authState: widget.authState,
@@ -249,7 +309,7 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
             ),
             if (_roundKey != null) ...[
               const SizedBox(height: 10),
-              _ExpectedRun(roundKey: _roundKey!, startTime: _startTime),
+              _ExpectedRun(estimate: _estimate, startTime: _startTime, endTime: _end),
             ],
             const SizedBox(height: 12),
             PrimaryButton(
@@ -277,37 +337,76 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
   }
 }
 
-/// "About 2 h 16 min · starting 5:00 am, back around 7:16 am".
+/// "Takes about 2 h 44 min · scheduled 8:00 pm - 10:44 pm", and a warning
+/// when the owner's window is shorter than the route usually takes.
 class _ExpectedRun extends StatelessWidget {
-  const _ExpectedRun({required this.roundKey, required this.startTime});
+  const _ExpectedRun({required this.estimate, required this.startTime, required this.endTime});
 
-  final String roundKey;
+  final Duration? estimate;
   final String? startTime;
+  final String? endTime;
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Duration?>(
-      future: RouteEstimates.forRoute(roundKey),
-      builder: (context, snapshot) {
-        final duration = snapshot.data;
-        final String text;
-        if (snapshot.connectionState != ConnectionState.done) {
-          text = 'Working out how long it takes…';
-        } else if (duration == null) {
-          text = 'No time estimate for this route yet - upload its run sheet to get one.';
-        } else {
-          final finish = expectedFinish(startTime, duration);
-          text = 'Takes about ${DeliveryEstimate.format(duration)}'
-              '${finish == null ? '' : ' · starting ${formatStartTime(startTime!)}, back around $finish'}';
-        }
-        return Row(
+    final window = formatWindow(startTime, endTime);
+    final length = windowLength(startTime, endTime);
+    final short = estimate != null && length != null && length < estimate! - const Duration(minutes: 5);
+    final text = [
+      estimate == null
+          ? 'No time estimate yet - upload its run sheet to get one'
+          : 'Takes about ${DeliveryEstimate.format(estimate!)}',
+      if (window != null) 'scheduled $window',
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
             const Icon(Icons.timelapse_rounded, size: 18, color: AppColors.brand),
             const SizedBox(width: 8),
             Expanded(child: Text(text, style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted))),
           ],
-        );
-      },
+        ),
+        if (short) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${DeliveryEstimate.format(estimate! - length)} less than the route usually takes.',
+            style: const TextStyle(fontSize: 12, color: AppColors.warning, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// "Start · 8:00 pm" - a label over a time, tapped to pick it.
+class _TimeButton extends StatelessWidget {
+  const _TimeButton({required this.label, required this.value, required this.onPressed});
+
+  final String label;
+  final String value;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12)),
+      child: Row(
+        children: [
+          const Icon(Icons.schedule_rounded, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 11, color: AppColors.inkMuted)),
+                Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -33,6 +33,7 @@ class RunDetailScreen extends StatefulWidget {
     required this.routeName,
     this.driver,
     this.startTime,
+    this.endTime,
   });
 
   final AuthState authState;
@@ -40,6 +41,7 @@ class RunDetailScreen extends StatefulWidget {
   final String routeName;
   final String? driver;
   final String? startTime;
+  final String? endTime;
 
   @override
   State<RunDetailScreen> createState() => _RunDetailScreenState();
@@ -128,6 +130,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                               listing: listing,
                               driver: widget.driver,
                               startTime: widget.startTime,
+                              endTime: widget.endTime,
                             );
                           }
                           final doc = docs[index - 1];
@@ -191,11 +194,12 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.listing, required this.driver, required this.startTime});
+  const _Header({required this.listing, required this.driver, required this.startTime, this.endTime});
 
   final RunListing listing;
   final String? driver;
   final String? startTime;
+  final String? endTime;
 
   @override
   Widget build(BuildContext context) {
@@ -204,12 +208,12 @@ class _Header extends StatelessWidget {
     final lastDrop = listing.lastDeliveredAt?.toLocal();
     final took = listing.actualDuration;
     final estimate = listing.estimatedTotal;
-    final finish = expectedFinish(startTime, estimate);
+    final finish = endTime == null ? expectedFinish(startTime, estimate) : formatStartTime(endTime!);
 
     final lines = <String>[
       [
         if (listing.date != null) formatShortDate(listing.date!, thisYear: now.year),
-        if (startTime != null) 'starts ${formatStartTime(startTime!)}',
+        ?formatWindow(startTime, endTime),
         driver ?? 'No driver assigned',
       ].join(' · '),
       switch (status) {

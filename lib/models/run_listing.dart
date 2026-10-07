@@ -20,13 +20,15 @@ enum RunStatus {
   final String label;
 }
 
-/// One run - one route's deliveries for one day - as the Runs tab lists it.
+/// One run - one route's deliveries for one day - as the Runs tabs list it
+/// (the owner's, and the driver's).
 ///
 /// Read from the run document alone: the backend keeps its live progress
 /// there (`delivered_count`, `started_at`, `last_delivered_at`,
 /// `completed_at`, `next_stop`, written by check-deviation on every stop
 /// marked delivered - domain/run_progress.py), so a list of runs costs one
-/// read per run rather than one per stop.
+/// read per run rather than one per stop. The driver's own Start and End taps
+/// are there too (`driver_started_at`, `driver_ended_at`).
 class RunListing {
   const RunListing({
     required this.id,
@@ -40,6 +42,8 @@ class RunListing {
     this.startedAt,
     this.lastDeliveredAt,
     this.completedAt,
+    this.driverStartedAt,
+    this.driverEndedAt,
     this.nextStopName,
   });
 
@@ -60,7 +64,31 @@ class RunListing {
   final DateTime? startedAt;
   final DateTime? lastDeliveredAt;
   final DateTime? completedAt;
+
+  /// When the driver tapped Start, and End; null until they do.
+  final DateTime? driverStartedAt;
+  final DateTime? driverEndedAt;
+
   final String? nextStopName;
+
+  /// When the run began: the driver's Start, or the first delivery if they
+  /// never tapped it - whichever came first.
+  DateTime? get started => switch ((driverStartedAt, startedAt)) {
+    (final a?, final b?) => a.isBefore(b) ? a : b,
+    (final a, final b) => a ?? b,
+  };
+
+  /// When it finished: the last stop delivered, or the driver's End if they
+  /// stopped short of it.
+  DateTime? get finished => completedAt ?? driverEndedAt;
+
+  /// Start to finish, Start and End included - what the driver's history
+  /// calls "total time". (Unlike [actualDuration], which is first delivery
+  /// to last, the figure the backend learns pace from.)
+  Duration? get totalTime {
+    final from = started, to = finished;
+    return from == null || to == null || to.isBefore(from) ? null : to.difference(from);
+  }
 
   double get progress => stopCount == 0 ? 0 : (deliveredCount / stopCount).clamp(0, 1).toDouble();
 
@@ -86,20 +114,23 @@ class RunListing {
       startedAt: _time(data['started_at']),
       lastDeliveredAt: _time(data['last_delivered_at']),
       completedAt: _time(data['completed_at']),
+      driverStartedAt: _time(data['driver_started_at']),
+      driverEndedAt: _time(data['driver_ended_at']),
       nextStopName: next is Map ? next['customer_name'] as String? : null,
     );
   }
 
   /// Upcoming, today or past, as of [now].
   ///
-  /// A finished run is past whatever its date. Otherwise its date decides: a
-  /// run under way with no date is "today". A run whose date has passed stays
-  /// past even if it was never finished - that is its status, not its tab.
+  /// A finished run (every stop delivered, or the driver tapped End) is past
+  /// whatever its date. Otherwise its date decides: a run under way with no
+  /// date is "today". A run whose date has passed stays past even if it was
+  /// never finished - that is its status, not its tab.
   RunPhase phase(DateTime now) {
-    if (completedAt != null) return RunPhase.past;
+    if (finished != null) return RunPhase.past;
     final today = DateTime(now.year, now.month, now.day);
     final day = date;
-    if (day == null) return startedAt != null ? RunPhase.today : RunPhase.upcoming;
+    if (day == null) return started != null ? RunPhase.today : RunPhase.upcoming;
     if (day.isBefore(today)) return RunPhase.past;
     if (day.isAfter(today)) return RunPhase.upcoming;
     return RunPhase.today;
@@ -108,7 +139,7 @@ class RunListing {
   RunStatus status(DateTime now) {
     if (completedAt != null) return RunStatus.done;
     if (phase(now) == RunPhase.past) return deliveredCount > 0 ? RunStatus.unfinished : RunStatus.notRun;
-    return startedAt != null ? RunStatus.onTheRoad : RunStatus.notStarted;
+    return started != null ? RunStatus.onTheRoad : RunStatus.notStarted;
   }
 
   /// Soonest first for what is coming, most recent first for what is done.

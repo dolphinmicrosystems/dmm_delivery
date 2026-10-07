@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../observability/crash_reporting.dart';
+
 /// Debug-only structured logging for the auth and owner flows.
 ///
 /// Every line is prefixed with `[BlueDot/<area>]` so a single filter picks
@@ -17,7 +19,8 @@ import 'package:flutter/foundation.dart';
 ///
 /// Calls compile away in release builds (`kDebugMode` guard), so these are
 /// safe to leave in place rather than adding and stripping them each time
-/// something needs tracing.
+/// something needs tracing - except `.error(...)`, which in release goes to
+/// Crashlytics (lib/observability/crash_reporting.dart).
 class AppLog {
   AppLog._();
 
@@ -42,8 +45,15 @@ class _Area {
 
   /// A failure. Same channel, but carries the error/stack so they land in
   /// one place instead of being split across a log line and a red screen.
+  ///
+  /// In release builds - where nothing is printed - it goes to Crashlytics
+  /// as a non-fatal report instead (CrashReporting), so a failure on a
+  /// driver's phone is still seen. Keep personal details out of [fields].
   void error(String message, Object? error, [StackTrace? stackTrace, Map<String, Object?> fields = const {}]) {
-    if (!kDebugMode) return;
+    if (!kDebugMode) {
+      CrashReporting.recordError('[$name] $message', error, stackTrace, fields);
+      return;
+    }
     debugPrint('[BlueDot/$name] ERROR $message${_format(fields)} error=$error');
     if (stackTrace != null) debugPrint('[BlueDot/$name] $stackTrace');
   }

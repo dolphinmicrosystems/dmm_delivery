@@ -4,11 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../config/infra_config.dart';
+import '../driver/driver_presence.dart';
 import '../models/auth_error_message.dart';
 import '../models/driver_invitation.dart';
 import '../models/owner_profile.dart';
-import '../services/driver_presence.dart';
 import '../notifications/push_notifications.dart';
+import '../observability/crash_reporting.dart';
 import '../util/app_log.dart';
 
 /// Who the signed-in Firebase user is, per the `role` custom claim the
@@ -172,6 +173,7 @@ class AuthState extends ChangeNotifier {
       await DriverPresence.goOfflineOnSignOut(uid: uid, ownerUid: ownerUid);
     }
     await PushNotifications.instance.unregister();
+    await CrashReporting.identify(uid: null, role: null);
     await FirebaseAuth.instance.signOut();
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../observability/crash_reporting.dart';
 import '../../settings/settings_screen.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
@@ -69,6 +70,14 @@ class OwnerMenuDrawer extends StatelessWidget {
                 );
               },
             ),
+            // Only in a build made with --dart-define=CRASH_TEST=true.
+            if (CrashReporting.testCrashOffered)
+              _MenuItem(
+                icon: Icons.bug_report_outlined,
+                title: 'Send a test crash',
+                subtitle: 'Closes the app; the report shows in Firebase Crashlytics',
+                onTap: CrashReporting.testCrash,
+              ),
           ],
         ),
       ),

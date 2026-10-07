@@ -13,7 +13,8 @@ import 'run_time.dart';
 /// **One-day runs** ([oneDay]) apply on their own calendar day only - "Ben
 /// covers South on the 25th" - and beat every regular row that day; the next
 /// day the regular rows answer again. [startTime] is when the run starts from
-/// that row's date; a one-day row without one keeps the regular row's.
+/// that row's date, and [endTime] when the owner expects it finished; a
+/// one-day row without a start time keeps the regular row's times, both.
 ///
 /// Mirrors `domain/route_assignment.py`. The two are a contract: the backend
 /// resolves the same rows the same way when it stamps `delivery_run.rider_id`
@@ -27,8 +28,13 @@ class RouteAssignment {
     this.driverName,
     this.createdAt,
     this.startTime,
+    this.endTime,
     this.oneDay = false,
+    this.id,
   });
+
+  /// The `route_assignments` document id; null for rows built in tests.
+  final String? id;
 
   final String roundKey;
   final DateTime effectiveFrom;
@@ -44,24 +50,31 @@ class RouteAssignment {
   /// When the run starts, 24-hour "HH:MM", or null if never set.
   final String? startTime;
 
+  /// When the owner expects it finished, "HH:MM"; at or before [startTime]
+  /// means the next morning. Null: no end set (the estimate is shown instead).
+  final String? endTime;
+
   /// Applies on [effectiveFrom]'s day only.
   final bool oneDay;
 
   bool get isUnassignment => driverUid == null;
 
-  RouteAssignment _withStartTime(String? time) => RouteAssignment(
+  RouteAssignment _withTimes(String? start, String? end) => RouteAssignment(
     roundKey: roundKey,
     effectiveFrom: effectiveFrom,
     driverUid: driverUid,
     driverName: driverName,
     createdAt: createdAt,
-    startTime: time,
+    startTime: start,
+    endTime: end,
     oneDay: oneDay,
+    id: id,
   );
 
   factory RouteAssignment.fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data();
     return RouteAssignment(
+      id: doc.id,
       roundKey: data['round_key'] as String? ?? '',
       // Epoch rather than null: a row with no date has never taken effect,
       // and the alternative is a nullable field every caller has to guard.
@@ -71,6 +84,7 @@ class RouteAssignment {
       driverName: data['driver_name'] as String?,
       createdAt: (data['created_at'] as Timestamp?)?.toDate(),
       startTime: data['start_time'] as String?,
+      endTime: data['end_time'] as String?,
       oneDay: data['one_day'] == true,
     );
   }
@@ -93,8 +107,9 @@ class RouteAssignment {
       if (regular == null || assignment._outranks(regular)) regular = assignment;
     }
     if (forToday == null) return regular;
+    // Times travel as a pair, as in domain/route_assignment.py.
     return forToday.startTime == null && regular?.startTime != null
-        ? forToday._withStartTime(regular!.startTime)
+        ? forToday._withTimes(regular!.startTime, regular.endTime)
         : forToday;
   }
 
@@ -155,11 +170,42 @@ class RouteAssignment {
     return (current: current, upcoming: upcoming);
   }
 
+  /// Who [booking] goes back to when the owner cancels it - the row to write
+  /// instead, minus its date and kind (those are the booking's own).
+  ///
+  ///  * A day's cover goes back to whoever drives the route regularly that
+  ///    day, at their usual times (null times: a one-day row borrows them).
+  ///  * A handover from a later date goes back to whoever had the route the
+  ///    day before it, with their times.
+  ///
+  /// The driver is null when nobody would have had it: the cancelled day or
+  /// route is left with no driver.
+  static ({String? driverUid, String? driverName, String? startTime, String? endTime}) replacementFor(
+    RouteAssignment booking,
+    Iterable<RouteAssignment> routeRows,
+  ) {
+    bool isBooking(RouteAssignment a) => identical(a, booking) || (a.id != null && a.id == booking.id);
+    final regular = routeRows.where((a) => !a.oneDay && !isBooking(a));
+    final day = _day(booking.effectiveFrom);
+    if (booking.oneDay) {
+      final back = activeAt(regular, DateTime(day.year, day.month, day.day, 12));
+      return (driverUid: back?.driverUid, driverName: back?.driverName, startTime: null, endTime: null);
+    }
+    final before = activeAt(regular, day.subtract(const Duration(minutes: 1)));
+    return (
+      driverUid: before?.driverUid,
+      driverName: before?.driverName,
+      startTime: before?.startTime,
+      endTime: before?.endTime,
+    );
+  }
+
   /// What the route card shows under the route's name.
   static String driverLabel(Iterable<RouteAssignment> assignments, DateTime at) {
     final active = activeAt(assignments, at);
     if (active == null || active.isUnassignment) return 'No driver assigned';
-    final time = active.startTime == null ? '' : ' · ${formatStartTime(active.startTime!)}';
+    final window = formatWindow(active.startTime, active.endTime);
+    final time = window == null ? '' : ' · $window';
     return '${active.driverName ?? 'Assigned'}$time';
   }
 

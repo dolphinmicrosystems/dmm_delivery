@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../notifications/push_notifications.dart';
+import '../../observability/crash_reporting.dart';
 import '../../state/auth_state.dart';
 import '../../util/app_log.dart';
 import '../root_shell.dart';
@@ -84,12 +85,11 @@ class AuthGate extends StatelessWidget {
             // Once signed in, register this phone for the person's
             // notifications. Idempotent per user, so rebuilds cost nothing.
             final uid = authState.user?.uid;
+            final role = authState.role == AuthRole.driver ? 'rider' : 'owner';
             if (uid != null) {
-              PushNotifications.instance.register(
-                uid: uid,
-                ownerUid: authState.ownerUid,
-                role: authState.role == AuthRole.driver ? 'rider' : 'owner',
-              );
+              PushNotifications.instance.register(uid: uid, ownerUid: authState.ownerUid, role: role);
+              // Crash reports say whose phone it was: the id, never the email.
+              CrashReporting.identify(uid: uid, role: role);
             }
             return RootShell(authState: authState);
         }

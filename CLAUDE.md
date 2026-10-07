@@ -9,7 +9,8 @@ Firebase/GCP project. Two roles, decided server-side, not by a UI toggle:
 
 - **Owner** — uploads run-sheet PDFs, reviews/reorders the parsed route, watches a driver board. This is
   where essentially all real work has happened.
-- **Driver** — still the original prototype's mock Rider tabs; the real driver-facing route view isn't built.
+- **Driver** (`lib/driver/`): sees their runs (Upcoming / Today / Past, each past run with its full history)
+  and their routes, and switches Online / Offline. Starting a run and marking stops delivered aren't built yet.
 
 The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + Terraform + Firestore
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
@@ -32,7 +33,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (227 tests, all passing)
+- Run all tests: `flutter test` (244 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -89,7 +90,7 @@ with the ephemeral workspace.
 - `AuthStatus.needsRole` is a defensive dead-end, not an expected state.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
-`_DriverShell` (the old 3-tab mock: Orders/Active/Earnings, driven by `AppState`) and *everyone else,
+`DriverShell` (`lib/driver/`, tabs Runs/Routes, Online switch in the bar) and *everyone else,
 including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
@@ -118,10 +119,13 @@ OwnerDriversScreen     → driver_invitations (invite / rename / resend, all fou
                          tap a row → DriverDetailScreen
 DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
                          + route_assignments/circuits: the Schedule section (regular routes, upcoming
-                           runs, days a colleague covers) and "Schedule a run"
+                           runs, days a colleague covers) and "Schedule a run"; each row's ⋮ menu
+                           changes times, removes the route from the driver, or cancels a booking
+                           (RouteAssigner.removeDriver / cancelBooking - new rows, never edits)
                          + vehicles (VehicleService: assign / change / remove / add, one per driver)
 SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the account card → OwnerProfileScreen
                          + user_settings/{uid}.driver_presence_alerts ("Driver online / offline")
+                         + user_settings/{uid}.late_start_alerts ("Late starts", from run-alerts)
                          + app_settings/{owner}.default_stop_seconds ("Time at each stop": what
                          an unlearned address costs in every estimate)
                          + app_settings/{owner}.invitation_ttl_days (the invitation deadline: how long
@@ -335,6 +339,52 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     - `settings_store.dart`: every settings read and write. Business settings live in
       `app_settings/{ownerUid}` and personal ones in `user_settings/{uid}`. Settings don't go on
       `AuthState`, which is sign-in only.
+- **The driver side** (`lib/driver/`, shell `DriverShell`):
+  - **Data.** `DriverDataBuilder` streams three queries once for both tabs: the driver's runs
+    (`delivery_run`, `rider_id == uid`, status `sequenced`), the business's `circuits` (route names) and
+    its whole `route_assignments`. The whole schedule matters because a colleague's one-day cover takes a
+    day off you. The rules let a driver read exactly these.
+  - **Tabs.** `DriverSchedule` (pure, tested in `test/driver_schedule_test.dart`) builds Upcoming / Today /
+    Past.
+    - Runs are placed by `RunListing.phase`.
+    - **Bookings** (a day they cover, or a route they take over later) show until that day's run sheet
+      exists.
+    - Start times come from the schedule for the run's own day, as on the owner's Runs tab.
+  - **A run** (`DriverRunScreen`) is read-only: the map, a summary, and the stops with their delivery
+    times. A driven run shows its history:
+    - Started: `RunListing.started`, the earlier of the driver's Start (`driver_started_at`) and the
+      first delivery.
+    - Finished: `finished`, all delivered, or the driver's End.
+    - Total time, the estimate, and the first and last delivery.
+  - **Who can open which run.** A driver can only open runs carrying their uid. The backend re-stamps
+    `rider_id` on a route's open runs whenever an assignment is written (`assign_route_runs.py`), so a
+    route assigned after its sheet was confirmed still reaches its driver.
+  - **Times and vehicle.** Each run and route shows its window (`formatWindow`: "5:00 am - 7:44 am") and
+    the vehicle the owner assigned them (`vehicles`, `assigned_driver_uid == uid`, streamed by
+    `DriverDataBuilder`). A past run shows its history instead of the vehicle.
+  - **Settings** (`lib/settings/driver_settings_screen.dart`, from the driver's menu): "Remind me
+    before a run", on or off and how long before (`ReminderCard`, `user_settings`). The backend's
+    `run-alerts` sends the reminders on channel `reminders`.
+  - **Notifications off.** `NotificationPermissionBanner` (in `lib/notifications/`) shows across the top
+    while they're off. It doesn't block the app.
+  - **No background permission.** Android shows a push with the app closed by itself; only the
+    notification permission matters.
+- **Crash reporting** (`lib/observability/crash_reporting.dart`, Firebase Crashlytics):
+  - **Release builds only.** It is off in debug, which keeps its own red screens and console. Started in
+    `main()` after `Firebase.initializeApp`.
+  - **What gets reported:**
+    - uncaught errors, as crashes;
+    - every `AppLog.<area>.error(...)`, as a non-fatal report, with the message as the reason and the
+      fields attached. That call prints nothing in release, so Crashlytics is where those errors go.
+  - **Who it happened to:** reports carry the account uid and role (`CrashReporting.identify` in
+    `AuthGate`, cleared on sign-out), **never the email**. Keep personal details out of `AppLog` error
+    fields too.
+  - **Gradle.** The Crashlytics Gradle plugin is in `android/settings.gradle.kts` and
+    `android/app/build.gradle.kts`.
+  - **Proving it works.** Build with `--dart-define=CRASH_TEST=true` in profile or release. The owner's
+    menu then offers "Send a test crash".
+  - **Firebase project.** The backend's `firebase_apps.tf` owns the app's Firebase registration and
+    outputs its `google-services.json`.
 - **Push notifications** (`lib/notifications/`):
   - **Registration.** `AuthGate` registers the phone on sign-in (permission prompt on Android 13+, token
     saved to `user_devices/{uid}/tokens/{token}`). `AuthState.signOut` unregisters it *before* signing
@@ -346,8 +396,7 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
   - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished),
     `live_runs` (low importance, silent), `drivers` (owners: a driver went online or offline) and `status`
     (a driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
-  - **Online / offline** (`lib/services/driver_presence.dart`) is the one real control on the driver's mock
-    Orders tab. It writes `driver_presence/{uid}` (`owner_uid`, `online`, `changed_at` = server time; the
+  - **Online / offline** (`lib/driver/driver_presence.dart`, the `OnlineSwitch` in the driver's app bar). It writes `driver_presence/{uid}` (`owner_uid`, `online`, `changed_at` = server time; the
     rules allow only the driver themselves). It shows the driver an ongoing "You're online", replaced by
     "You're offline". The backend's notify-presence tells the owners. Signing out sets a driver offline
     first. Owners mute these alerts in Settings → Notifications, stored per person in
@@ -424,10 +473,11 @@ request `@2x` on high-density screens (`retinaMode`).
 
 **Scheduling is one sheet, `showScheduleRunSheet`** (`lib/widgets/schedule_run_sheet.dart`). The Routes tab
 opens it with the route fixed (long-press, then the person icon); the driver page opens it with the driver
-fixed ("Schedule a run"). It sets the date, a start time, and **every day from then** vs **this day only**,
-and shows the route's expected run time and finish time. The expected time comes from
+fixed ("Schedule a run"). It sets the date, a **start** and a **finish** time, and **every day from then** vs **this day only**.
+The finish starts as start + the route's estimate (`addToStartTime`). The owner sets it to whatever
+they expect, and the sheet warns when the window is shorter than the estimate. The expected time comes from
 `RouteEstimates.forRoute`, which reads the latest run's `estimated_total_s`. It writes one
-`route_assignments` row through `RouteAssigner` (`start_time`, `one_day`). The one-day and start-time rules
+`route_assignments` row through `RouteAssigner` (`start_time`, `end_time`, `one_day`). The one-day and start-time rules
 live in `RouteAssignment.activeAt`, which mirrors the backend's `domain/route_assignment.py`; keep them in
 step. Times are stored "HH:MM" and shown through `lib/models/run_time.dart`.
 
@@ -446,7 +496,7 @@ file; select weights via `TextStyle(fontWeight: ...)`, not separate family names
 - `lib/screens/customer/*` (Home/Tracking/Receipt) and the customer half of `AppState` are **unreachable**
   — the Customer/Rider toggle was removed when the Owner shell landed.
 - `lib/screens/owner/run_sheet_diff_screen.dart` is unreferenced; `RunSheetReviewScreen` replaced it.
-- `AppState` (`lib/state/app_state.dart`) now serves only the driver mock tabs: a single `ChangeNotifier`
-  of hardcoded sample data, instantiated in `_DriverShell` and passed down by constructor.
+- `AppState` (`lib/state/app_state.dart`) is used only by the unreachable customer screens. The driver mock
+  tabs it fed (Orders / Active / Earnings) were deleted when `DriverShell` replaced them.
 
 Don't extend these; if a task touches one, check whether the real Owner/driver path is what's actually wanted.

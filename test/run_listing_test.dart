@@ -9,6 +9,8 @@ RunListing run({
   int delivered = 0,
   DateTime? started,
   DateTime? completed,
+  DateTime? driverStarted,
+  DateTime? driverEnded,
 }) => RunListing.fromMap('r', {
   'round_key': 'south',
   'round': 'Run 2',
@@ -17,6 +19,8 @@ RunListing run({
   'delivered_count': delivered,
   'started_at': started,
   'completed_at': completed,
+  'driver_started_at': driverStarted,
+  'driver_ended_at': driverEnded,
 });
 
 void main() {
@@ -66,5 +70,35 @@ void main() {
     final runs = [run(date: '28/09/2026'), run(date: '26/09/2026'), run(date: '27/09/2026')];
     expect([for (final r in RunListing.sorted(runs, RunPhase.upcoming)) r.date!.day], [26, 27, 28]);
     expect([for (final r in RunListing.sorted(runs, RunPhase.past)) r.date!.day], [28, 27, 26]);
+  });
+
+  group("the driver's Start and End", () {
+    test('tapping Start puts the run on the road before any delivery', () {
+      expect(run(driverStarted: now).status(now), RunStatus.onTheRoad);
+    });
+
+    test('tapping End finishes it: past, and not finished if stops were left', () {
+      final ended = run(delivered: 52, started: now, driverStarted: now, driverEnded: now);
+      expect(ended.phase(now), RunPhase.past);
+      expect(ended.status(now), RunStatus.unfinished);
+    });
+
+    test('history runs from the earlier of Start and first delivery, to the finish', () {
+      final done = run(
+        delivered: 60,
+        driverStarted: DateTime(2026, 9, 25, 4, 55),
+        started: DateTime(2026, 9, 25, 5, 4),
+        completed: DateTime(2026, 9, 25, 7, 10),
+        driverEnded: DateTime(2026, 9, 25, 7, 20),
+      );
+      expect(done.started, DateTime(2026, 9, 25, 4, 55));
+      expect(done.finished, DateTime(2026, 9, 25, 7, 10));
+      expect(done.totalTime, const Duration(hours: 2, minutes: 15));
+    });
+
+    test('no total time until it has both ends', () {
+      expect(run(driverStarted: now).totalTime, isNull);
+      expect(run().totalTime, isNull);
+    });
   });
 }

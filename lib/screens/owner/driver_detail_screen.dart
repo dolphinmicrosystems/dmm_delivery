@@ -258,12 +258,112 @@ class _Schedule extends StatelessWidget {
         effectiveFrom: choice.date,
         driver: choice.driver,
         startTime: choice.startTime,
+        endTime: choice.endTime,
         oneDay: choice.oneDay,
       );
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('schedule run failed', error, stack);
       messenger.showSnackBar(SnackBar(content: Text(RouteAssigner.errorMessage(error))));
     }
+  }
+
+  /// Asks before a change that notifies drivers; true to go ahead.
+  static Future<bool> _confirm(BuildContext context, String title, String body, String action) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Keep')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(action)),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// Runs a schedule write, and says so if it is refused.
+  static Future<void> _write(BuildContext context, String what, Future<void> Function() write) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await write();
+    } on FirebaseException catch (error, stack) {
+      AppLog.owner.error('$what failed', error, stack);
+      messenger.showSnackBar(SnackBar(content: Text(RouteAssigner.errorMessage(error))));
+    }
+  }
+
+  Future<void> _changeTimes(
+    BuildContext context,
+    String roundKey,
+    String name,
+    RouteAssignment current,
+  ) async {
+    final ownerUid = authState.ownerUid;
+    if (ownerUid == null) return;
+    final choice = await showScheduleRunSheet(
+      context,
+      authState: authState,
+      roundKey: roundKey,
+      routeName: name,
+      driver: driver,
+      current: current,
+    );
+    if (choice == null || !context.mounted) return;
+    await _write(
+      context,
+      'change times',
+      () => RouteAssigner.assign(
+        ownerUid: ownerUid,
+        roundKey: choice.roundKey,
+        effectiveFrom: choice.date,
+        driver: choice.driver,
+        startTime: choice.startTime,
+        endTime: choice.endTime,
+        oneDay: choice.oneDay,
+      ),
+    );
+  }
+
+  Future<void> _remove(BuildContext context, String roundKey, String name) async {
+    final ownerUid = authState.ownerUid;
+    if (ownerUid == null) return;
+    final go = await _confirm(
+      context,
+      'Remove ${driver.displayName} from $name?',
+      'From today, $name has no driver until you assign someone. '
+          '${driver.displayName} gets a notification, and the route leaves their app.',
+      'Remove',
+    );
+    if (!go || !context.mounted) return;
+    final now = DateTime.now();
+    await _write(
+      context,
+      'remove driver',
+      () => RouteAssigner.removeDriver(
+        ownerUid: ownerUid,
+        roundKey: roundKey,
+        from: DateTime(now.year, now.month, now.day),
+      ),
+    );
+  }
+
+  Future<void> _cancel(
+    BuildContext context,
+    RouteAssignment booking,
+    List<RouteAssignment> routeRows,
+    String title,
+    String body,
+  ) async {
+    final ownerUid = authState.ownerUid;
+    if (ownerUid == null) return;
+    if (!await _confirm(context, title, body, 'Cancel it') || !context.mounted) return;
+    await _write(
+      context,
+      'cancel booking',
+      () => RouteAssigner.cancelBooking(ownerUid: ownerUid, booking: booking, routeRows: routeRows),
+    );
   }
 
   @override
@@ -339,24 +439,61 @@ class _Schedule extends StatelessWidget {
                         _ScheduleRow(
                           icon: Icons.alt_route_rounded,
                           title: names[entry.key]!,
-                          when: 'Every day${_at(entry.row.startTime)}',
+                          when: 'Every day${_at(entry.row.startTime, entry.row.endTime)}',
                           roundKey: entry.key,
                           startTime: entry.row.startTime,
+                          endTime: entry.row.endTime,
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => RouteMapScreen(authState: authState, roundKey: entry.key),
                             ),
                           ),
+                          actions: [
+                            _RowAction(
+                              'Change times',
+                              Icons.schedule_rounded,
+                              () => _changeTimes(context, entry.key, names[entry.key]!, entry.row),
+                            ),
+                            _RowAction(
+                              'Remove from ${driver.displayName}',
+                              Icons.person_remove_outlined,
+                              () => _remove(context, entry.key, names[entry.key]!),
+                              destructive: true,
+                            ),
+                          ],
                         ),
                       for (final booking in routes.upcoming)
                         _ScheduleRow(
                           icon: booking.oneDay ? Icons.event_available_rounded : Icons.event_repeat_rounded,
                           title: names[booking.roundKey]!,
                           when: booking.oneDay
-                              ? '${_day(booking.effectiveFrom)}${_at(booking.startTime)} · this day only'
-                              : 'Every day from ${_day(booking.effectiveFrom)}${_at(booking.startTime)}',
+                              ? '${_day(booking.effectiveFrom)}${_at(booking.startTime, booking.endTime)}'
+                                    ' · this day only'
+                              : 'Every day from ${_day(booking.effectiveFrom)}'
+                                    '${_at(booking.startTime, booking.endTime)}',
                           roundKey: booking.roundKey,
                           startTime: booking.startTime,
+                          endTime: booking.endTime,
+                          actions: [
+                            _RowAction(
+                              booking.oneDay ? 'Cancel this day' : 'Cancel the handover',
+                              Icons.event_busy_outlined,
+                              () => _cancel(
+                                context,
+                                booking,
+                                byRoute[booking.roundKey]!,
+                                booking.oneDay
+                                    ? 'Cancel ${names[booking.roundKey]} on ${_day(booking.effectiveFrom)}?'
+                                    : 'Cancel the handover of ${names[booking.roundKey]}?',
+                                booking.oneDay
+                                    ? 'The day goes back to the route\'s regular driver. '
+                                          'Both of them get a notification.'
+                                    : 'Whoever has ${names[booking.roundKey]} now keeps it. '
+                                          '${driver.displayName} gets a notification.',
+                              ),
+                              destructive: true,
+                            ),
+                          ],
                         ),
                       for (final cover in covered)
                         _ScheduleRow(
@@ -366,6 +503,21 @@ class _Schedule extends StatelessWidget {
                               ? '${_day(cover.effectiveFrom)} · no driver that day'
                               : '${_day(cover.effectiveFrom)} · covered by ${cover.driverName ?? 'another driver'}',
                           muted: true,
+                          actions: [
+                            _RowAction(
+                              cover.isUnassignment ? 'Give the day back' : 'Cancel the cover',
+                              Icons.event_busy_outlined,
+                              () => _cancel(
+                                context,
+                                cover,
+                                byRoute[cover.roundKey]!,
+                                'Give ${_day(cover.effectiveFrom)} back to ${driver.displayName}?',
+                                '${driver.displayName} drives ${names[cover.roundKey]} that day after all. '
+                                    'Everyone concerned gets a notification.',
+                              ),
+                              destructive: true,
+                            ),
+                          ],
                         ),
                     ],
                   ),
@@ -378,7 +530,11 @@ class _Schedule extends StatelessWidget {
     );
   }
 
-  static String _at(String? startTime) => startTime == null ? '' : ' at ${formatStartTime(startTime)}';
+  /// " · 5:00 am - 7:44 am", " · 5:00 am", or nothing.
+  static String _at(String? startTime, [String? endTime]) {
+    final window = formatWindow(startTime, endTime);
+    return window == null ? '' : ' · $window';
+  }
 
   static String _day(DateTime date) {
     final weekday = const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][date.weekday - 1];
@@ -393,8 +549,10 @@ class _ScheduleRow extends StatelessWidget {
     required this.when,
     this.roundKey,
     this.startTime,
+    this.endTime,
     this.onTap,
     this.muted = false,
+    this.actions = const [],
   });
 
   final IconData icon;
@@ -404,8 +562,12 @@ class _ScheduleRow extends StatelessWidget {
   /// For the expected run time; null for rows that aren't this driver's run.
   final String? roundKey;
   final String? startTime;
+  final String? endTime;
   final VoidCallback? onTap;
   final bool muted;
+
+  /// The row's ⋮ menu; none, no menu.
+  final List<_RowAction> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -420,14 +582,46 @@ class _ScheduleRow extends StatelessWidget {
               future: RouteEstimates.forRoute(key),
               builder: (context, snapshot) {
                 final duration = snapshot.data;
-                final finish = expectedFinish(startTime, duration);
+                // The owner's own finish is already in [when].
+                final finish = endTime == null ? expectedFinish(startTime, duration) : null;
                 final length = duration == null ? '' : ' · about ${DeliveryEstimate.format(duration)}';
                 return Text('$when$length${finish == null ? '' : ', back ~$finish'}');
               },
             ),
-      trailing: onTap == null ? null : const Icon(Icons.chevron_right_rounded),
+      trailing: actions.isNotEmpty
+          ? PopupMenuButton<_RowAction>(
+              tooltip: 'Options',
+              onSelected: (action) => action.onSelected(),
+              itemBuilder: (_) => [
+                for (final action in actions)
+                  PopupMenuItem(
+                    value: action,
+                    child: Row(
+                      children: [
+                        Icon(action.icon, size: 18, color: action.destructive ? Colors.red.shade700 : null),
+                        const SizedBox(width: 10),
+                        Text(
+                          action.label,
+                          style: TextStyle(color: action.destructive ? Colors.red.shade700 : null),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            )
+          : (onTap == null ? null : const Icon(Icons.chevron_right_rounded)),
     );
   }
+}
+
+/// One entry in a schedule row's ⋮ menu.
+class _RowAction {
+  const _RowAction(this.label, this.icon, this.onSelected, {this.destructive = false});
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onSelected;
+  final bool destructive;
 }
 
 /// The vehicle this driver drives, with Change / Remove, or Assign.

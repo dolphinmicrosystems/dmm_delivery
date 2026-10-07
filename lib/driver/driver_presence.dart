@@ -18,10 +18,13 @@ class DriverPresence {
   static DocumentReference<Map<String, dynamic>> _doc(String uid) =>
       FirebaseFirestore.instance.collection('driver_presence').doc(uid);
 
-  static Stream<bool> watch(String uid) => _doc(uid).snapshots().map((snap) => snap.data()?['online'] == true);
+  static Stream<bool> watch(String uid) =>
+      _doc(uid).snapshots().map((snap) => snap.data()?['online'] == true);
 
   static Future<void> set({required String uid, required String ownerUid, required bool online}) async {
-    await _doc(uid).set({'owner_uid': ownerUid, 'online': online, 'changed_at': FieldValue.serverTimestamp()});
+    await _doc(
+      uid,
+    ).set({'owner_uid': ownerUid, 'online': online, 'changed_at': FieldValue.serverTimestamp()});
     AppLog.auth('presence set', {'online': online});
     await PresenceNotification.show(online: online);
   }
@@ -33,7 +36,9 @@ class DriverPresence {
     try {
       final snap = await _doc(uid).get();
       if (snap.data()?['online'] == true) {
-        await _doc(uid).set({'owner_uid': ownerUid, 'online': false, 'changed_at': FieldValue.serverTimestamp()});
+        await _doc(
+          uid,
+        ).set({'owner_uid': ownerUid, 'online': false, 'changed_at': FieldValue.serverTimestamp()});
       }
     } catch (error, stack) {
       AppLog.auth.error('presence offline on sign-out failed', error, stack);

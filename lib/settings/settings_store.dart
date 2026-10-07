@@ -12,8 +12,9 @@ import '../util/app_log.dart';
 ///  * **The business's** - `app_settings/{ownerUid}`: how long an invitation
 ///    lasts, the time allowed at each stop. One answer for everyone in the
 ///    business; the backend reads them too.
-///  * **This person's own** - `user_settings/{uid}`: which alerts they want.
-///    Two owners of one business can choose differently.
+///  * **This person's own** - `user_settings/{uid}`: which alerts an owner
+///    wants, and when a driver wants reminding. Two owners of one business can
+///    choose differently.
 ///
 /// Both are written merged: each document holds several settings, and a plain
 /// set() of one would clear the rest. The Firestore rules accept exact fields,
@@ -82,4 +83,52 @@ class SettingsStore {
     AppLog.owner('setting driver presence alerts', {'on': on});
     await _personal.set({'driver_presence_alerts': on}, SetOptions(merge: true));
   }
+
+  /// Whether this owner hears "Sonia hasn't started Run 3" (run-alerts).
+  Stream<bool> lateStartAlerts() =>
+      _personal.snapshots().map((snap) => snap.data()?['late_start_alerts'] != false);
+
+  Future<void> setLateStartAlerts(bool on) async {
+    AppLog.owner('setting late start alerts', {'on': on});
+    await _personal.set({'late_start_alerts': on}, SetOptions(merge: true));
+  }
+
+  /// A driver's reminders before each run (run-alerts): on unless turned
+  /// off, 30 minutes ahead unless they chose otherwise.
+  Stream<RunReminders> runReminders() => _personal.snapshots().map(
+    (snap) => RunReminders(
+      on: snap.data()?['run_reminders'] != false,
+      leadMinutes: RunReminders.sanitize(snap.data()?['reminder_lead_minutes']),
+    ),
+  );
+
+  Future<void> setRunReminders(bool on) async {
+    AppLog.auth('setting run reminders', {'on': on});
+    await _personal.set({'run_reminders': on}, SetOptions(merge: true));
+  }
+
+  Future<void> setReminderLeadMinutes(int minutes) async {
+    AppLog.auth('setting reminder lead', {'minutes': minutes});
+    await _personal.set({'reminder_lead_minutes': minutes}, SetOptions(merge: true));
+  }
+}
+
+/// A driver's reminder choice. The bounds mirror firestore.rules (5 to 240
+/// minutes) and the backend's domain/run_alerts.py, whose default is 30.
+class RunReminders {
+  const RunReminders({required this.on, required this.leadMinutes});
+
+  static const defaultLeadMinutes = 30;
+  static const presets = [15, 30, 60, 120];
+
+  final bool on;
+  final int leadMinutes;
+
+  static int sanitize(Object? raw) {
+    final minutes = (raw as num?)?.toInt();
+    return minutes == null || minutes < 5 || minutes > 240 ? defaultLeadMinutes : minutes;
+  }
+
+  /// "30 min", "1 h", "2 h".
+  static String label(int minutes) => minutes < 60 ? '$minutes min' : '${minutes ~/ 60} h';
 }

@@ -60,7 +60,16 @@ class NotificationChannels {
     enableVibration: false,
   );
 
-  static const all = [assignments, runs, liveRuns, drivers, status];
+  /// Drivers: "Run 3 starts at 5:00 am" before a run, and a nudge if it is
+  /// late. Switched off in the driver's Settings (user_settings.run_reminders).
+  static const reminders = AndroidNotificationChannel(
+    'reminders',
+    'Run reminders',
+    description: 'Before your run starts, and if it is late to start.',
+    importance: Importance.high,
+  );
+
+  static const all = [assignments, runs, liveRuns, drivers, status, reminders];
 
   /// The channel a pushed notification names, or [assignments] for one that
   /// names none (the manifest's default).
