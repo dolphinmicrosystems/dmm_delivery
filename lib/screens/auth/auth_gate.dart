@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../services/push_notifications.dart';
+import '../../notifications/push_notifications.dart';
 import '../../state/auth_state.dart';
 import '../../util/app_log.dart';
 import '../root_shell.dart';

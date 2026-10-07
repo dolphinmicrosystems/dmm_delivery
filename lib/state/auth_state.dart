@@ -7,8 +7,8 @@ import '../config/infra_config.dart';
 import '../models/auth_error_message.dart';
 import '../models/driver_invitation.dart';
 import '../models/owner_profile.dart';
-import '../models/run_time.dart';
-import '../services/push_notifications.dart';
+import '../services/driver_presence.dart';
+import '../notifications/push_notifications.dart';
 import '../util/app_log.dart';
 
 /// Who the signed-in Firebase user is, per the `role` custom claim the
@@ -164,8 +164,13 @@ class AuthState extends ChangeNotifier {
 
   Future<void> signOut() async {
     AppLog.auth('signOut requested', {'uid': user?.uid});
-    // Before signing out, while the rules still know who is asking: this
-    // phone stops receiving this person's notifications.
+    // Before signing out, while the rules still know who is asking: a driver
+    // goes offline (their owners are told), and this phone stops receiving
+    // this person's notifications.
+    final uid = user?.uid;
+    if (role == AuthRole.driver && uid != null) {
+      await DriverPresence.goOfflineOnSignOut(uid: uid, ownerUid: ownerUid);
+    }
     await PushNotifications.instance.unregister();
     await FirebaseAuth.instance.signOut();
   }
@@ -238,59 +243,5 @@ class AuthState extends ChangeNotifier {
         .collection('route_assignments')
         .where('owner_uid', isEqualTo: ownerUid)
         .snapshots();
-  }
-
-  /// How long a newly sent invitation stays valid, in days.
-  ///
-  /// A stream rather than a one-off read because the invite dialog and the
-  /// settings control are on screen at the same time - the dialog has to
-  /// quote the deadline the owner just changed, not the one it opened with.
-  ///
-  /// A missing document is not an error: it is a project that has never
-  /// changed the setting, and [InvitationTtl.fallback] is what the client
-  /// hardcoded before this was configurable.
-  Stream<int> invitationTtlDays() {
-    return FirebaseFirestore.instance
-        .collection('app_settings')
-        .doc(ownerUid ?? '-')
-        .snapshots()
-        .map((snap) => InvitationTtl.sanitize(snap.data()?['invitation_ttl_days']));
-  }
-
-  /// Writes the invitation validity period.
-  ///
-  /// Applies to invitations sent *after* it, and to nothing already out
-  /// there: `expires_at` is stamped onto each document when it is written, so
-  /// shortening the window cannot retroactively expire an invitation somebody
-  /// is already holding. Resending is what moves an existing deadline.
-  Future<void> setInvitationTtlDays(int days) async {
-    AppLog.owner('setting invitation ttl', {'days': days});
-    // One settings document per business - the invite window is a property
-    // of this owner's operation, not of the app.
-    // Merged: the same document holds the default stop time, and a plain
-    // set() would clear it.
-    await FirebaseFirestore.instance.collection('app_settings').doc(ownerUid!).set({
-      'invitation_ttl_days': days,
-    }, SetOptions(merge: true));
-  }
-
-  /// How long to allow at a stop for an address nothing has been learned
-  /// about yet - the figure the whole estimate rests on until drivers start
-  /// delivering through the app.
-  Stream<int> defaultStopSeconds() {
-    return FirebaseFirestore.instance
-        .collection('app_settings')
-        .doc(ownerUid ?? '-')
-        .snapshots()
-        .map((snap) => StopTime.sanitize(snap.data()?['default_stop_seconds']));
-  }
-
-  /// Writes it. Applies to the next upload and to routes re-timed after it;
-  /// addresses drivers have already taught us keep their learned time.
-  Future<void> setDefaultStopSeconds(int seconds) async {
-    AppLog.owner('setting default stop time', {'seconds': seconds});
-    await FirebaseFirestore.instance.collection('app_settings').doc(ownerUid!).set({
-      'default_stop_seconds': seconds,
-    }, SetOptions(merge: true));
   }
 }

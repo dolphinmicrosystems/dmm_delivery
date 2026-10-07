@@ -1,8 +1,12 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/rider_job.dart';
+import '../../services/driver_presence.dart';
 import '../../state/app_state.dart';
+import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../util/app_log.dart';
 import '../../widgets/pill_badge.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/section_label.dart';
@@ -10,16 +14,40 @@ import '../../widgets/stat_tile.dart';
 import '../../widgets/surface_card.dart';
 
 class RiderOrdersScreen extends StatefulWidget {
-  const RiderOrdersScreen({super.key, required this.appState});
+  const RiderOrdersScreen({super.key, required this.appState, required this.authState});
 
   final AppState appState;
+  final AuthState authState;
 
   @override
   State<RiderOrdersScreen> createState() => _RiderOrdersScreenState();
 }
 
 class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
-  bool online = true;
+  /// What the driver just chose, shown until Firestore confirms it, so the
+  /// switch moves under their thumb rather than a beat later.
+  bool? _pending;
+
+  late final Stream<bool> _presence = DriverPresence.watch(widget.authState.user!.uid);
+
+  Future<void> _setOnline(bool online) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _pending = online);
+    try {
+      await DriverPresence.set(
+        uid: widget.authState.user!.uid,
+        ownerUid: widget.authState.ownerUid!,
+        online: online,
+      );
+    } on FirebaseException catch (error, stack) {
+      AppLog.auth.error('presence write failed', error, stack, {'online': online});
+      messenger.showSnackBar(
+        SnackBar(content: Text("Couldn't switch ${online ? 'online' : 'offline'}. Check your connection.")),
+      );
+    } finally {
+      if (mounted) setState(() => _pending = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,18 +59,25 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text('Orders', style: Theme.of(context).textTheme.headlineMedium),
-            Row(
-              children: [
-                Text(
-                  online ? 'Online' : 'Offline',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                Switch(
-                  value: online,
-                  activeThumbColor: AppColors.brand,
-                  onChanged: (value) => setState(() => online = value),
-                ),
-              ],
+            // Real, unlike the rest of this mock tab: driver_presence/{uid}.
+            StreamBuilder<bool>(
+              stream: _presence,
+              builder: (context, snapshot) {
+                final online = _pending ?? snapshot.data ?? false;
+                return Row(
+                  children: [
+                    Text(
+                      online ? 'Online' : 'Offline',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    Switch(
+                      value: online,
+                      activeThumbColor: AppColors.brand,
+                      onChanged: snapshot.hasData ? _setOnline : null,
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),

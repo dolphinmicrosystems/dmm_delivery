@@ -120,11 +120,12 @@ DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-writte
                          + route_assignments/circuits: the Schedule section (regular routes, upcoming
                            runs, days a colleague covers) and "Schedule a run"
                          + vehicles (VehicleService: assign / change / remove / add, one per driver)
-OwnerSettingsScreen    → (menu) user_profiles/{uid}, the account card → OwnerProfileScreen
-                         + app_settings/invitations.default_stop_seconds ("Time at each stop": what
+SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the account card → OwnerProfileScreen
+                         + user_settings/{uid}.driver_presence_alerts ("Driver online / offline")
+                         + app_settings/{owner}.default_stop_seconds ("Time at each stop": what
                          an unlearned address costs in every estimate)
-                         + app_settings/invitations (the invitation deadline: how long a driver
-                         has to accept; says on screen that it stops mattering once they sign in)
+                         + app_settings/{owner}.invitation_ttl_days (the invitation deadline: how long
+                         a driver has to accept; says on screen that it stops mattering once they sign in)
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
 ```
 
@@ -319,7 +320,22 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
   `adb logcat | grep "BlueDot/"`.
 - Fields are logged as `key=value` maps, and secrets are logged by *presence* (`hasIdToken: true`), never
   by value.
-- **Push notifications** (`lib/services/push_notifications.dart`):
+- **Feature folders.** Most of `lib/` is split by layer (`screens/`, `services/`, `models/`, `widgets/`).
+  Notifications and settings are each one folder instead, because both keep growing and their pieces
+  belong together:
+  - **`lib/notifications/`:**
+    - `push_notifications.dart`: registration, foreground display, and the background handler.
+    - `notification_channels.dart`: every channel, and the Blue Dot icon and color.
+    - `live_run_notification.dart`: the owner's live run.
+    - `presence_notification.dart`: the driver's own "You're online".
+    - A new kind of notification gets its own file there, plus a channel in `NotificationChannels`.
+  - **`lib/settings/`:**
+    - `settings_screen.dart`: the screen.
+    - `cards/`: one widget per setting; `save_setting.dart` is the shared write-and-report helper.
+    - `settings_store.dart`: every settings read and write. Business settings live in
+      `app_settings/{ownerUid}` and personal ones in `user_settings/{uid}`. Settings don't go on
+      `AuthState`, which is sign-in only.
+- **Push notifications** (`lib/notifications/`):
   - **Registration.** `AuthGate` registers the phone on sign-in (permission prompt on Android 13+, token
     saved to `user_devices/{uid}/tokens/{token}`). `AuthState.signOut` unregisters it *before* signing
     out, while the rules still know who is asking. The backend's `notify-assignment` sends to these tokens.
@@ -327,14 +343,21 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     `bluedot_large`, `@color/bluedot_brand` and channel id `assignments` are a contract with
     `dmm-delivery-app/src/dmm_delivery/adapters/fcm_user_push.py` and the manifest's FCM defaults. Don't
     rename them on one side only.
-  - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished) and
-    `live_runs` (low importance, silent). Their ids are a contract with the backend.
-  - **The live run notification** is sent as data, and the app draws it (`drawLiveRun`). It is ongoing,
+  - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished),
+    `live_runs` (low importance, silent), `drivers` (owners: a driver went online or offline) and `status`
+    (a driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
+  - **Online / offline** (`lib/services/driver_presence.dart`) is the one real control on the driver's mock
+    Orders tab. It writes `driver_presence/{uid}` (`owner_uid`, `online`, `changed_at` = server time; the
+    rules allow only the driver themselves). It shows the driver an ongoing "You're online", replaced by
+    "You're offline". The backend's notify-presence tells the owners. Signing out sets a driver offline
+    first. Owners mute these alerts in Settings → Notifications, stored per person in
+    `user_settings/{uid}.driver_presence_alerts` (`SettingsStore`).
+  - **The live run notification** is sent as data, and the app draws it (`LiveRunNotification`). It is ongoing,
     shows a progress bar and a chronometer from the run's start, uses the run id as its tag (so each run
     updates in place), and times out 30 minutes after its last update so it can't get stuck. When the app
     is closed, `pushBackgroundHandler` draws it (registered in `main()`; it runs in its own isolate, so it
     initializes the plugin itself). Sign-out clears every notification.
-  - **While the app is open**, Android does not draw a push. `_showInForeground` draws it through
+  - **While the app is open**, Android does not draw a push. `PushNotifications._showInForeground` draws it through
     `flutter_local_notifications`, which needs core library desugaring (`android/app/build.gradle.kts`).
   - **The FlutterFire packages move together.** Adding `firebase_messaging` pulled `firebase_core` ahead of
     `firebase_auth`, and the APK stopped compiling (`customAuthDomain` not found). Upgrade them as a

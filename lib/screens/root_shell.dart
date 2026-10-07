@@ -125,7 +125,7 @@ class _DriverShellState extends State<_DriverShell> {
           body: IndexedStack(
             index: tabIndex,
             children: [
-              RiderOrdersScreen(appState: appState),
+              RiderOrdersScreen(appState: appState, authState: widget.authState),
               RiderActiveScreen(appState: appState),
               RiderEarningsScreen(appState: appState),
             ],

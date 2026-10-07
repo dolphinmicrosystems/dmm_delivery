@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../models/driver_invitation.dart';
 import '../../services/driver_access_api.dart';
 import '../../services/driver_inviter.dart';
+import '../../settings/settings_store.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
@@ -125,7 +126,7 @@ class _InviteDriverDialogState extends State<_InviteDriverDialog> {
     // The validity is read live rather than passed in, so the dialog quotes
     // the window the owner set moments ago on the screen behind it.
     return StreamBuilder<int>(
-      stream: widget.authState.invitationTtlDays(),
+      stream: SettingsStore(widget.authState).invitationTtlDays(),
       builder: (context, snapshot) {
         final ttlDays = snapshot.data ?? InvitationTtl.fallback;
 
@@ -440,7 +441,7 @@ class _DriverRowState extends State<_DriverRow> {
   }
 
   Future<void> _resend() async {
-    final ttlDays = await widget.authState.invitationTtlDays().first;
+    final ttlDays = await SettingsStore(widget.authState).invitationTtlDays().first;
     if (!mounted) return;
 
     await _guard(

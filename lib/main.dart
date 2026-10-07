@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 
 import 'config/infra_config.dart';
 import 'firebase_options.dart';
+import 'notifications/push_notifications.dart';
 import 'screens/auth/auth_gate.dart';
-import 'services/push_notifications.dart';
 import 'state/auth_state.dart';
 import 'theme/app_theme.dart';
 import 'util/app_log.dart';

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../settings/settings_screen.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
-import 'owner_settings_screen.dart';
 
 /// The right-hand hamburger menu from owner-menu.html. An end drawer rather
 /// than a third nav tab: these are occasional destinations, and the bottom
@@ -51,7 +51,7 @@ class OwnerMenuDrawer extends StatelessWidget {
                 AppLog.owner('menu -> Settings');
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => OwnerSettingsScreen(authState: authState)),
+                  MaterialPageRoute(builder: (_) => SettingsScreen(authState: authState)),
                 );
               },
             ),
