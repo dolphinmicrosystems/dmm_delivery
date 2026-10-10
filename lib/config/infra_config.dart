@@ -45,4 +45,9 @@ class InfraConfig {
   /// only bound to this bucket; uploading to the default bucket instead
   /// silently never triggers processing.
   static const runSheetsBucket = 'gs://i-destiny-428904-s2-run-sheets-f9d5d1';
+
+  /// Where delivery photos go (storage_pod_photos.rules: drivers write into
+  /// their own business's folder). Empty when not deployed - the driving
+  /// screen then delivers without offering a photo.
+  static const podPhotosBucket = 'gs://i-destiny-428904-s2-pod-photos-f9d5d1';
 }

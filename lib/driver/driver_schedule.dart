@@ -106,6 +106,27 @@ class DriverSchedule {
     return cards;
   }
 
+  /// What the Home tab leads with: the run that is [live] now (started, not
+  /// finished), and the [next] thing to drive - today's first card not yet
+  /// started, else the soonest upcoming one. [later] is what follows it.
+  static ({DriverRunCard? live, DriverRunCard? next, List<DriverRunCard> later}) home(
+    Map<RunPhase, List<DriverRunCard>> cards,
+    DateTime now,
+  ) {
+    final today = cards[RunPhase.today] ?? const [];
+    final live = today.where((card) => card.run?.status(now) == RunStatus.onTheRoad).firstOrNull;
+    final waiting = [
+      for (final card in today)
+        if (card.run == null || card.run!.status(now) == RunStatus.notStarted) card,
+      ...?cards[RunPhase.upcoming],
+    ];
+    return (
+      live: live,
+      next: waiting.firstOrNull,
+      later: waiting.skip(1).take(3).toList(),
+    );
+  }
+
   /// The routes the driver has now, each with its start time, then those
   /// they take over from a later date - the Routes tab.
   static List<DriverRoute> routes({

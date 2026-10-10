@@ -10,7 +10,8 @@ Firebase/GCP project. Two roles, decided server-side, not by a UI toggle:
 - **Owner** — uploads run-sheet PDFs, reviews/reorders the parsed route, watches a driver board. This is
   where essentially all real work has happened.
 - **Driver** (`lib/driver/`): sees their runs (Upcoming / Today / Past, each past run with its full history)
-  and their routes, and switches Online / Offline. Starting a run and marking stops delivered aren't built yet.
+  and their routes, switches Online / Offline, and drives a run: map following the van, voice, Arrived, photo,
+  Delivered (`lib/driver/driving/`).
 
 The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + Terraform + Firestore
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
@@ -33,7 +34,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (244 tests, all passing)
+- Run all tests: `flutter test` (255 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -70,6 +71,7 @@ rewrites it from *live* GCP state, not from Terraform or the backend repo's file
 | --- | --- |
 | `runSheetsBucket` | the `process-run-sheet-upload` function's own Storage trigger (name-matching buckets is unsafe — a stale `run-sheets-*` bucket exists) |
 | `googleSignInServerClientId` | Firebase Auth's Google IdP config (not Terraform-managed) |
+| `podPhotosBucket` | the one `*-pod-photos-*` bucket in the project (empty if there isn't exactly one: the driving screen then delivers without a photo) |
 | `riderBoardUrl` | the `rider-board` function's URL. **Nothing in the app reads it any more** (the Runs tab replaced the board); still generated while the function is deployed |
 
 If `GCP_PROJECT_ID` disagrees with the committed `lib/firebase_options.dart`, the script runs
@@ -90,7 +92,7 @@ with the ephemeral workspace.
 - `AuthStatus.needsRole` is a defensive dead-end, not an expected state.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
-`DriverShell` (`lib/driver/`, tabs Runs/Routes, Online switch in the bar) and *everyone else,
+`DriverShell` (`lib/driver/`, tabs Home/Runs/Routes, Online switch in the bar) and *everyone else,
 including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
@@ -114,6 +116,8 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
 RunsScreen             → delivery_run (owner_uid, status == sequenced) + circuits + route_assignments +
                          driver_invitations → RunListing cards in Upcoming / Today / Past tabs
 RunDetailScreen        → one delivery_run + its stops, streamed: map with delivered stops ticked, progress
+                         + the driver's started / finished / total time, and "Delivery photos (n)"
+                           → RunPhotosScreen (pod_photo_url per stop, from the pod-photos bucket)
 OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
                          DriverAccessApi → driver-access function (remove / restore);
                          tap a row → DriverDetailScreen
@@ -350,6 +354,39 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     - **Bookings** (a day they cover, or a route they take over later) show until that day's run sheet
       exists.
     - Start times come from the schedule for the run's own day, as on the owner's Runs tab.
+  - **Home** (`DriverHomeScreen`): the run **live now** (started, not finished), else **next up**, with a
+    countdown on the day; then the next few. Chosen by `DriverSchedule.home`, which is tested.
+  - **Every card opens** (`openDriverCard`). A run opens `DriverRunScreen`. A booking, or a route on the
+    Routes tab, opens `DriverRouteScreen`: the route as planned, built from `circuits.stops_summary` with
+    pins from the `addresses` geocode cache. Both are readable by a driver, so a route can be opened
+    before its run sheet exists. A route assigned after its only run sheet was already past has no run
+    the driver can open; that is correct, because past runs keep their driver.
+  - **Driving** (`lib/driver/driving/`). Opened by Home's "Drive"/"Start run" and the run screen's button,
+    for today's unfinished run.
+    - **The map** is `flutter_map` with `BasemapLayer` (the app's chosen style), the road still to drive
+      (`road_legs` from the last delivered stop on), the stop pins, and the van at the phone's position
+      (`geolocator`). It follows the van until dragged; "Follow me" resumes. The screen stays awake
+      (`wakelock_plus`).
+    - **The flow:** Start run (`driver_started_at`), then the current stop. **Arrived** is offered by itself
+      within 60 m plus GPS accuracy (`DrivingLogic.isNear`); "Arrived?" asks first when far. That writes
+      `arrived_at`. Then **Take photo & deliver** (camera via `image_picker`, uploaded to
+      `InfraConfig.podPhotosBucket` at `{ownerUid}/{runId}/{stopId}.jpg`) or deliver without one. This
+      writes `status`, `delivered_at`, `pod_photo_url` and `delivered_lat`/`lng`/`accuracy_m`, all through
+      `DeliveryWriter`. End run asks first if stops are left.
+    - **Photos are evidence** (`PhotoStamp`, the `image` package, in a background isolate):
+      - **Smaller:** at most 1280 px on the long side, JPEG quality 70, about 150-300 KB.
+      - **Stamped:** a dark bar with the date and time taken, and run / stop / customer, burned into the
+        pixels in plain ASCII (the bitmap font can't draw accents or "·").
+      - **One folder per run** (`{ownerUid}/{runId}/{stopId}.jpg`, with `run_id`/`stop_id` metadata).
+      - **The owner** sees them on the run: "Delivery photos (n)" opens `RunPhotosScreen` (a grid in route
+        order; tap to zoom). The header also shows started / finished / total time.
+    - **Voice** (`VoiceGuide`, `flutter_tts`, the phone's own engine): the start line, "Next: … 600 metres
+      north-east" once per stop, then "Approaching …" with the items and instructions within 150 m. The text
+      and thresholds are in `DrivingLogic` (tested in `test/driving_logic_test.dart`). Mute in the bar or
+      Settings → Voice prompts (`user_settings.voice_prompts`).
+    - **Turn-by-turn** is Google Maps: "Navigate" opens `google.navigation:`.
+    - **Foreground only.** Location and voice stop when the screen is off or another app is in front. A
+      foreground service with background location is the next step.
   - **A run** (`DriverRunScreen`) is read-only: the map, a summary, and the stops with their delivery
     times. A driven run shows its history:
     - Started: `RunListing.started`, the earlier of the driver's Start (`driver_started_at`) and the

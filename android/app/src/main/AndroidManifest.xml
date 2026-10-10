@@ -2,6 +2,10 @@
     <!-- Android 13+: notifications need the user's permission, asked for at
          sign-in (PushNotifications). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Driving a run: the van on the map, "Arrived" near each stop, and the
+         position recorded with each delivery. Only while the run is open. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
         android:label="Blue Dot"
         android:name="${applicationName}"
@@ -53,6 +57,24 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- Spoken directions (flutter_tts): Android 11+ hides the speech
+             engine from apps that don't declare it here. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- "Navigate" hands the stop to Google Maps (url_launcher). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+        <!-- The delivery photo (image_picker opens the camera app). -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

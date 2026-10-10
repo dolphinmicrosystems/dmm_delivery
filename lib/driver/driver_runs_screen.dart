@@ -9,7 +9,7 @@ import '../theme/app_colors.dart';
 import '../widgets/pill_badge.dart';
 import '../widgets/surface_card.dart';
 import 'driver_data.dart';
-import 'driver_run_screen.dart';
+import 'driver_navigation.dart';
 import 'driver_schedule.dart';
 
 /// The driver's Runs tab: Upcoming, Today and Past, opening on Today.
@@ -111,7 +111,12 @@ class _CardList extends StatelessWidget {
         final card = cards[index];
         final run = card.run;
         return run == null
-            ? _BookingCard(card: card, now: now, vehicle: vehicle)
+            ? _BookingCard(
+                card: card,
+                now: now,
+                vehicle: vehicle,
+                onTap: () => openDriverCard(context, authState, card, vehicle: vehicle),
+              )
             : _RunCard(
                 card: card,
                 run: run,
@@ -119,18 +124,7 @@ class _CardList extends StatelessWidget {
                 // The vehicle is for runs still to drive; history doesn't
                 // record which one was used.
                 vehicle: phase == RunPhase.past ? null : vehicle,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => DriverRunScreen(
-                      authState: authState,
-                      runId: run.id,
-                      routeName: card.routeName,
-                      startTime: card.start,
-                      endTime: card.end,
-                      vehicle: phase == RunPhase.past ? null : vehicle,
-                    ),
-                  ),
-                ),
+                onTap: () => openDriverCard(context, authState, card, vehicle: vehicle),
               );
       },
     );
@@ -224,51 +218,56 @@ class _RunCard extends StatelessWidget {
 
 /// A day the schedule gives the driver before its run sheet exists.
 class _BookingCard extends StatelessWidget {
-  const _BookingCard({required this.card, required this.now, required this.vehicle});
+  const _BookingCard({required this.card, required this.now, required this.vehicle, required this.onTap});
 
   final DriverRunCard card;
   final DateTime now;
   final String? vehicle;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final booking = card.booking!;
     final start = card.start;
-    return SurfaceCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  card.routeName,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: SurfaceCard(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    card.routeName,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
                 ),
-              ),
-              PillBadge(
-                label: booking.oneDay ? 'Covering' : 'Your route',
-                background: AppColors.brandSoft,
-                foreground: AppColors.brand,
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            [
-              booking.oneDay ? relativeDayLabel(card.day, now) : 'From ${relativeDayLabel(card.day, now)}',
-              ?formatWindow(start, card.end),
-            ].join(' · '),
-            style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
-          ),
-          if (vehicle != null) _VehicleLine(vehicle!),
-          const SizedBox(height: 6),
-          const Text(
-            'The stops show here once the run sheet is uploaded.',
-            style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
-          ),
-        ],
+                PillBadge(
+                  label: booking.oneDay ? 'Covering' : 'Your route',
+                  background: AppColors.brandSoft,
+                  foreground: AppColors.brand,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [
+                booking.oneDay ? relativeDayLabel(card.day, now) : 'From ${relativeDayLabel(card.day, now)}',
+                ?formatWindow(start, card.end),
+              ].join(' · '),
+              style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
+            ),
+            if (vehicle != null) _VehicleLine(vehicle!),
+            const SizedBox(height: 6),
+            const Text(
+              'Tap to see the route. What to deliver shows once the run sheet is uploaded.',
+              style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+            ),
+          ],
+        ),
       ),
     );
   }

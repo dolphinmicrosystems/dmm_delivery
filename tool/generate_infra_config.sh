@@ -121,6 +121,21 @@ if [ -z "$DRIVER_ACCESS_URL" ]; then
   echo "         that it isn't configured. Deploy it, then re-run." >&2
 fi
 
+# Delivery photos (the driver's camera, on "Delivered"). Matched by name - the
+# bucket Terraform creates is "<project>-pod-photos-<suffix>" - and refused
+# when more than one matches, which is the trap runSheetsBucket avoids by
+# reading its function's trigger instead. Not fatal when absent.
+POD_PHOTOS_BUCKETS=$(gcloud storage buckets list --project="$PROJECT_ID" \
+  --filter="name~-pod-photos-" --format="value(name)" "${ACCOUNT_FLAG[@]}" 2>/dev/null || true)
+POD_PHOTOS_BUCKET=""
+if [ "$(printf '%s' "$POD_PHOTOS_BUCKETS" | grep -c .)" = "1" ]; then
+  POD_PHOTOS_BUCKET="$POD_PHOTOS_BUCKETS"
+else
+  echo "warning: expected exactly one *-pod-photos-* bucket in $PROJECT_ID, found:" >&2
+  echo "         '${POD_PHOTOS_BUCKETS}' - podPhotosBucket will be empty and delivery" >&2
+  echo "         photos will be skipped. Deploy the backend, then re-run." >&2
+fi
+
 TOKEN=$(gcloud auth print-access-token "${ACCOUNT_FLAG[@]}")
 SIGNIN_CLIENT_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT_ID" \
   "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT_ID/defaultSupportedIdpConfigs/google.com" \
@@ -177,6 +192,11 @@ class InfraConfig {
   /// only bound to this bucket; uploading to the default bucket instead
   /// silently never triggers processing.
   static const runSheetsBucket = 'gs://$RUN_SHEETS_BUCKET';
+
+  /// Where delivery photos go (storage_pod_photos.rules: drivers write into
+  /// their own business's folder). Empty when not deployed - the driving
+  /// screen then delivers without offering a photo.
+  static const podPhotosBucket = '${POD_PHOTOS_BUCKET:+gs://$POD_PHOTOS_BUCKET}';
 }
 EOF
 

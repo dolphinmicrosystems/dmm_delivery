@@ -7,6 +7,7 @@ import '../theme/app_colors.dart';
 import '../widgets/pill_badge.dart';
 import '../widgets/surface_card.dart';
 import 'driver_data.dart';
+import 'driver_navigation.dart';
 import 'driver_schedule.dart';
 
 /// The driver's Routes tab: the routes the owner has given them, each with
@@ -48,41 +49,45 @@ class DriverRoutesScreen extends StatelessWidget {
       itemBuilder: (context, index) {
         final route = routes[index];
         final from = route.from;
-        return SurfaceCard(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                radius: 18,
-                backgroundColor: AppColors.brandSoft,
-                child: Icon(Icons.alt_route_rounded, color: AppColors.brand, size: 18),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(route.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 2),
-                    Text(
-                      formatWindow(route.startTime, route.endTime) ?? 'No start time set',
-                      style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted),
-                    ),
-                    if (data.vehicle != null)
+        return InkWell(
+          onTap: () => openDriverRoute(context, route, vehicle: data.vehicle?.description),
+          borderRadius: BorderRadius.circular(20),
+          child: SurfaceCard(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  radius: 18,
+                  backgroundColor: AppColors.brandSoft,
+                  child: Icon(Icons.alt_route_rounded, color: AppColors.brand, size: 18),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(route.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
                       Text(
-                        'Vehicle: ${data.vehicle!.description}',
+                        formatWindow(route.startTime, route.endTime) ?? 'No start time set',
                         style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted),
                       ),
-                  ],
+                      if (data.vehicle != null)
+                        Text(
+                          'Vehicle: ${data.vehicle!.description}',
+                          style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-              if (from != null)
-                PillBadge(
-                  label: 'From ${relativeDayLabel(from, now)}',
-                  background: AppColors.brandSoft,
-                  foreground: AppColors.brand,
-                ),
-            ],
+                if (from != null)
+                  PillBadge(
+                    label: 'From ${relativeDayLabel(from, now)}',
+                    background: AppColors.brandSoft,
+                    foreground: AppColors.brand,
+                  ),
+              ],
+            ),
           ),
         );
       },

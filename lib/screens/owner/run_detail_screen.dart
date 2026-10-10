@@ -13,6 +13,7 @@ import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/route_preview_map.dart';
 import '../../widgets/stop_instructions_sheet.dart';
+import 'run_photos_screen.dart';
 
 /// One run, live: the route on the map with delivered stops ticked off, how
 /// far along it is, and each stop's status.
@@ -131,6 +132,12 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                               driver: widget.driver,
                               startTime: widget.startTime,
                               endTime: widget.endTime,
+                              photoCount: docs.where((doc) => doc.data()['pod_photo_url'] is String).length,
+                              onPhotos: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => RunPhotosScreen(routeName: widget.routeName, stops: docs),
+                                ),
+                              ),
                             );
                           }
                           final doc = docs[index - 1];
@@ -160,7 +167,25 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
-                                      const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 20),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (data['pod_photo_url'] is String)
+                                            const Padding(
+                                              padding: EdgeInsets.only(right: 4),
+                                              child: Icon(
+                                                Icons.photo_camera_outlined,
+                                                size: 16,
+                                                color: AppColors.inkMuted,
+                                              ),
+                                            ),
+                                          const Icon(
+                                            Icons.check_circle_rounded,
+                                            color: AppColors.success,
+                                            size: 20,
+                                          ),
+                                        ],
+                                      ),
                                       if (at != null)
                                         Text(
                                           formatClock(at.hour, at.minute),
@@ -194,12 +219,23 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.listing, required this.driver, required this.startTime, this.endTime});
+  const _Header({
+    required this.listing,
+    required this.driver,
+    required this.startTime,
+    this.endTime,
+    this.photoCount = 0,
+    this.onPhotos,
+  });
 
   final RunListing listing;
   final String? driver;
   final String? startTime;
   final String? endTime;
+
+  /// Stops with a delivery photo, and how to open them.
+  final int photoCount;
+  final VoidCallback? onPhotos;
 
   @override
   Widget build(BuildContext context) {
@@ -229,6 +265,14 @@ class _Header extends StatelessWidget {
               '${finish == null ? '' : ', back ~$finish'}',
       },
       if (listing.nextStopName != null && status == RunStatus.onTheRoad) 'Next: ${listing.nextStopName}',
+      // The driver's times: Start (or first delivery) to End (or last).
+      if (listing.started?.toLocal() case final started?)
+        [
+          'Started ${formatClock(started.hour, started.minute)}',
+          if (listing.finished?.toLocal() case final finished?)
+            'finished ${formatClock(finished.hour, finished.minute)}',
+          if (listing.totalTime case final total?) 'total ${DeliveryEstimate.format(total)}',
+        ].join(' · '),
     ];
 
     return Padding(
@@ -253,6 +297,14 @@ class _Header extends StatelessWidget {
                 backgroundColor: AppColors.hairline,
                 color: status == RunStatus.done ? AppColors.success : AppColors.brand,
               ),
+            ),
+          ],
+          if (photoCount > 0) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: onPhotos,
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
+              label: Text('Delivery photos ($photoCount)'),
             ),
           ],
           const SizedBox(height: 8),

@@ -15,6 +15,7 @@ import '../widgets/pill_badge.dart';
 import '../widgets/route_preview_map.dart';
 import '../widgets/surface_card.dart';
 import 'driver_runs_screen.dart';
+import 'driving/driving_screen.dart';
 
 /// One of the driver's runs: the route on the map, what it involves, and -
 /// once driven - its full history: when it started and finished, how long it
@@ -121,6 +122,26 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                         vehicle: widget.vehicle,
                       ),
                     ),
+                    // Today's run, not finished: drive it from here too.
+                    if (listing.phase(DateTime.now()) == RunPhase.today && listing.finished == null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        child: FilledButton.icon(
+                          onPressed: () => Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => DrivingScreen(
+                                authState: widget.authState,
+                                runId: widget.runId,
+                                routeName: widget.routeName,
+                                vehicle: widget.vehicle,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.navigation_rounded),
+                          label: Text(listing.started == null ? 'Start run' : 'Drive this run'),
+                          style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                        ),
+                      ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
                       child: Text(

@@ -111,6 +111,15 @@ class SettingsStore {
     AppLog.auth('setting reminder lead', {'minutes': minutes});
     await _personal.set({'reminder_lead_minutes': minutes}, SetOptions(merge: true));
   }
+
+  /// Whether the driving screen speaks: the next stop, what to deliver as the
+  /// van gets close. On unless turned off.
+  Stream<bool> voicePrompts() => _personal.snapshots().map((snap) => snap.data()?['voice_prompts'] != false);
+
+  Future<void> setVoicePrompts(bool on) async {
+    AppLog.auth('setting voice prompts', {'on': on});
+    await _personal.set({'voice_prompts': on}, SetOptions(merge: true));
+  }
 }
 
 /// A driver's reminder choice. The bounds mirror firestore.rules (5 to 240

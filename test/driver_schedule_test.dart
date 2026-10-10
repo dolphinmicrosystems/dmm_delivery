@@ -106,4 +106,40 @@ void main() {
     ).single;
     expect((route.startTime, route.endTime), ('20:00', '22:44'));
   });
+
+  group('the Home tab', () {
+    final rows = [row('south', 'ana', longAgo, start: '05:00'), row('run3', 'ana', longAgo, start: '13:00')];
+
+    test('a run under way is live, and the next is what is still to start', () {
+      final driving = RunListing.fromMap('a', {
+        'round_key': 'south',
+        'delivery_date': '05/10/2026',
+        'stop_count': 60,
+        'delivered_count': 12,
+        'started_at': DateTime(2026, 10, 5, 5, 5),
+      });
+      final home = DriverSchedule.home(
+        build([driving, run('run3', '05/10/2026'), run('south', '06/10/2026')], rows),
+        now,
+      );
+
+      expect(home.live?.run?.id, 'a');
+      expect(home.next?.routeName, 'Run 3');
+      expect([for (final card in home.later) card.day], [DateTime(2026, 10, 6)]);
+    });
+
+    test('with nothing under way, the next run up leads', () {
+      final home = DriverSchedule.home(build([run('south', '06/10/2026')], rows), now);
+
+      expect(home.live, isNull);
+      expect(home.next?.day, DateTime(2026, 10, 6));
+    });
+
+    test('a finished run is neither live nor next', () {
+      final done = run('south', '05/10/2026', completed: DateTime(2026, 10, 5, 7));
+      final home = DriverSchedule.home(build([done], rows), now);
+
+      expect((home.live, home.next), (null, null));
+    });
+  });
 }
