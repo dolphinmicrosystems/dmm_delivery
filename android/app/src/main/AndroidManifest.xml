@@ -62,15 +62,6 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
-        <!-- "Navigate" hands the stop to Google Maps (url_launcher). -->
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="https" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <data android:scheme="google.navigation" />
-        </intent>
         <!-- The delivery photo (image_picker opens the camera app). -->
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />

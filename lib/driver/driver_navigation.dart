@@ -10,7 +10,13 @@ import 'driver_schedule.dart';
 /// Opens what a driver's card stands for: the day's run when its run sheet
 /// exists (DriverRunScreen), else the route as planned (DriverRouteScreen).
 /// Every card the driver sees opens - none is a dead end.
-void openDriverCard(BuildContext context, AuthState authState, DriverRunCard card, {String? vehicle}) {
+void openDriverCard(
+  BuildContext context,
+  AuthState authState,
+  DriverRunCard card, {
+  String? vehicle,
+  bool canStartToday = false,
+}) {
   final run = card.run;
   final past = run != null && run.phase(DateTime.now()) == RunPhase.past;
   Navigator.of(context).push(
@@ -31,13 +37,22 @@ void openDriverCard(BuildContext context, AuthState authState, DriverRunCard car
               startTime: card.start,
               endTime: card.end,
               vehicle: vehicle,
+              authState: authState,
+              canStartToday: canStartToday,
             ),
     ),
   );
 }
 
-/// Opens one of the driver's routes as planned.
-void openDriverRoute(BuildContext context, DriverRoute route, {String? vehicle}) {
+/// Opens one of the driver's routes as planned - with "Start this route
+/// today" when [canStartToday].
+void openDriverRoute(
+  BuildContext context,
+  DriverRoute route, {
+  required AuthState authState,
+  String? vehicle,
+  bool canStartToday = false,
+}) {
   Navigator.of(context).push(
     MaterialPageRoute(
       builder: (_) => DriverRouteScreen(
@@ -46,6 +61,8 @@ void openDriverRoute(BuildContext context, DriverRoute route, {String? vehicle})
         startTime: route.startTime,
         endTime: route.endTime,
         vehicle: vehicle,
+        authState: authState,
+        canStartToday: canStartToday,
       ),
     ),
   );

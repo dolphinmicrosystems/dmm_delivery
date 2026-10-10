@@ -142,4 +142,16 @@ void main() {
       expect((home.live, home.next), (null, null));
     });
   });
+
+  test('only the driver the schedule names today may start the route', () {
+    final rows = [
+      row('south', 'ana', longAgo),
+      row('run3', 'ben', longAgo),
+      row('run3', 'ana', DateTime(2026, 10, 5), oneDay: true), // Ana covers Run 3 today
+    ];
+
+    expect(DriverSchedule.scheduledToday('ana', rows, 'south', now), isTrue);
+    expect(DriverSchedule.scheduledToday('ana', rows, 'run3', now), isTrue);
+    expect(DriverSchedule.scheduledToday('ben', rows, 'run3', now), isFalse);
+  });
 }

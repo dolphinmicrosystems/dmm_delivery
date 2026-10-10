@@ -34,7 +34,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (255 tests, all passing)
+- Run all tests: `flutter test` (262 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -367,8 +367,9 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
       (`road_legs` from the last delivered stop on), the stop pins, and the van at the phone's position
       (`geolocator`). It follows the van until dragged; "Follow me" resumes. The screen stays awake
       (`wakelock_plus`).
-    - **The flow:** Start run (`driver_started_at`), then the current stop. **Arrived** is offered by itself
-      within 60 m plus GPS accuracy (`DrivingLogic.isNear`); "Arrived?" asks first when far. That writes
+    - **The flow:** Start run (`driver_started_at`), then the current stop. **Arrived** shows only within
+      60 m plus GPS accuracy (`DrivingLogic.isNear`), never from far away. The exception is a phone with
+      no location (off, or permission refused), so the driver is never stuck. That writes
       `arrived_at`. Then **Take photo & deliver** (camera via `image_picker`, uploaded to
       `InfraConfig.podPhotosBucket` at `{ownerUid}/{runId}/{stopId}.jpg`) or deliver without one. This
       writes `status`, `delivered_at`, `pod_photo_url` and `delivered_lat`/`lng`/`accuracy_m`, all through
@@ -382,11 +383,49 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
         order; tap to zoom). The header also shows started / finished / total time.
     - **Voice** (`VoiceGuide`, `flutter_tts`, the phone's own engine): the start line, "Next: … 600 metres
       north-east" once per stop, then "Approaching …" with the items and instructions within 150 m. The text
-      and thresholds are in `DrivingLogic` (tested in `test/driving_logic_test.dart`). Mute in the bar or
-      Settings → Voice prompts (`user_settings.voice_prompts`).
-    - **Turn-by-turn** is Google Maps: "Navigate" opens `google.navigation:`.
+      and thresholds are in `DrivingLogic` (tested in `test/driving_logic_test.dart`). Mute on the map or in
+      Settings → Voice prompts (`user_settings.voice_prompts`). The voice button on the map (next to
+      "Follow me") switches it on or off; turning it on says the next stop at once.
+    - **Preview maps vs the driving map.** The run and route screens show the plan. Their "Drive" /
+      "Start" button over the map opens the driving screen, the only map with the van, the voice and
+      Arrived.
+    - **Turn-by-turn is in the app** (`turn_by_turn.dart`, `routes_client.dart`). Nothing hands off to Google
+      Maps; the Android chooser that offered Uber Eats is gone, and so is `url_launcher`.
+      - **The route:** for the current stop, the app asks the Routes API (`computeRoutes`, TRAFFIC_UNAWARE,
+        with navigation instructions) for the road from the van, using the app key (`GOOGLE_MAP_TILES_KEY`,
+        which `maps.tf` also allows for `routes.googleapis.com`) with the same `X-Android-*` headers as the
+        tiles.
+      - **On the map:** the line is drawn bold, and a banner shows the next turn's arrow, distance and
+        instruction.
+      - **The voice:** "Continue for …" on a long stretch, "In 300 metres, turn left…", then the turn
+        itself. That last one is urgent and jumps the queue.
+      - **Re-routing** happens after 2 fixes more than 50 m off the line, at most every 10 s.
+      - **Navigation mode is on from the start** (there is no Directions button; the failure banner's Retry
+        asks again):
+        - the map turns heading-up (`rotate(-heading)`, the heading taken only while moving > 1.5 m/s);
+        - it zooms to 17.5, with the van low on the screen (`move(..., offset:)`);
+        - markers counter-rotate (`rotate: true`) to stay upright;
+        - the stop panel shrinks to a bar: name, distance left, minutes, arrival time
+          (`TurnByTurn.remainingMeters`/`remainingTime`). Tap it for the details.
+      - **Leaving navigation mode.** It ends by itself near the stop, where the full panel comes back for
+        Arrived, and resumes for the next stop after a delivery.
+      - **Nothing to dismiss.** The turn banner can't be closed, as in Google Maps.
+      - **Voice on/off lives on the map only,** not in the top bar.
+      - The logic is pure and tested (`test/turn_by_turn_test.dart`).
+    - **The voice queues** (`VoiceGuide`): lines are said in order, and `urgent` lines clear the queue.
     - **Foreground only.** Location and voice stop when the screen is off or another app is in front. A
       foreground service with background location is the next step.
+  - **Start this route today** (`route_starter.dart`): on the route view, a today booking and Home's next-up
+    card, when `DriverSchedule.scheduledToday`. It writes `run_starts/{id}` and waits for the backend's
+    `start-route-run` to answer with a run (today's sheet, or a copy of the last one), then opens the
+    driving screen. The driving screen notes a copied run's sheet date.
+  - **Tap a stop** on any driver map or list for `showStopDetails` (`lib/widgets/stop_details_sheet.dart`):
+    name, address, items, instructions, phone, and the delivery time and photo once delivered. The route
+    view reads items and instructions from the route card.
+  - **Swipe down for the whole map.** The driver's run and route screens and the owner's run screen use
+    `MapWithSheet` (`lib/widgets/map_with_sheet.dart`): the map fills the screen, the list sits in a sheet
+    that snaps to map only, half and most of the screen. The owner's `RouteMapScreen` sheet snaps the same
+    way.
   - **A run** (`DriverRunScreen`) is read-only: the map, a summary, and the stops with their delivery
     times. A driven run shows its history:
     - Started: `RunListing.started`, the earlier of the driver's Start (`driver_started_at`) and the

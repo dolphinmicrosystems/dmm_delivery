@@ -120,12 +120,18 @@ class DriverSchedule {
         if (card.run == null || card.run!.status(now) == RunStatus.notStarted) card,
       ...?cards[RunPhase.upcoming],
     ];
-    return (
-      live: live,
-      next: waiting.firstOrNull,
-      later: waiting.skip(1).take(3).toList(),
-    );
+    return (live: live, next: waiting.firstOrNull, later: waiting.skip(1).take(3).toList());
   }
+
+  /// Whether [driverUid] is the one scheduled on [roundKey] today - who may
+  /// "Start this route today" (the backend checks the same).
+  static bool scheduledToday(
+    String driverUid,
+    Iterable<RouteAssignment> assignments,
+    String roundKey,
+    DateTime now,
+  ) =>
+      RouteAssignment.activeAt(assignments.where((a) => a.roundKey == roundKey), now)?.driverUid == driverUid;
 
   /// The routes the driver has now, each with its start time, then those
   /// they take over from a later date - the Routes tab.

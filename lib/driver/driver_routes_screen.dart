@@ -50,7 +50,18 @@ class DriverRoutesScreen extends StatelessWidget {
         final route = routes[index];
         final from = route.from;
         return InkWell(
-          onTap: () => openDriverRoute(context, route, vehicle: data.vehicle?.description),
+          onTap: () => openDriverRoute(
+            context,
+            route,
+            authState: authState,
+            vehicle: data.vehicle?.description,
+            canStartToday: DriverSchedule.scheduledToday(
+              authState.user!.uid,
+              data.assignments,
+              route.roundKey,
+              now,
+            ),
+          ),
           borderRadius: BorderRadius.circular(20),
           child: SurfaceCard(
             padding: const EdgeInsets.all(16),

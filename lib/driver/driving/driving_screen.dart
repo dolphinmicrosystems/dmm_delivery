@@ -7,12 +7,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../models/delivery_estimate.dart';
 import '../../models/road_legs.dart';
 import '../../models/run_stop.dart';
+import '../../models/run_time.dart';
 import '../../settings/settings_store.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
@@ -20,9 +20,12 @@ import '../../util/app_log.dart';
 import '../../widgets/basemap.dart';
 import '../../widgets/basemap_attribution.dart';
 import '../../widgets/route_preview_map.dart';
+import '../../widgets/stop_details_sheet.dart';
 import 'delivery_writer.dart';
 import 'driving_logic.dart';
 import 'photo_stamp.dart';
+import 'routes_client.dart';
+import 'turn_by_turn.dart';
 import 'voice_guide.dart';
 
 /// Driving a run: the map in the app's chosen style with the van on it,
@@ -97,8 +100,44 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   /// "Arrived" tapped this session (the stop's `arrived_at` follows).
   final _arrived = <String>{};
-  String? _announcedNext;
-  String? _announcedApproach;
+  // What has been said, per run, for as long as the app is open - so neither
+  // turning the voice off and on nor reopening the run repeats it.
+  static final _saidNext = <String, String>{};
+  static final _saidApproach = <String, String>{};
+  String? get _announcedNext => _saidNext[widget.runId];
+  set _announcedNext(String? id) =>
+      id == null ? _saidNext.remove(widget.runId) : _saidNext[widget.runId] = id;
+  String? get _announcedApproach => _saidApproach[widget.runId];
+  set _announcedApproach(String? id) =>
+      id == null ? _saidApproach.remove(widget.runId) : _saidApproach[widget.runId] = id;
+
+  // In-app turn-by-turn to the current stop (TurnByTurn, RoutesClient).
+  static const _routes = RoutesClient();
+  bool _guidance = true;
+
+  /// Navigation mode, on from the start: the map turns to the way the van is
+  /// heading and follows it close, and the stop panel shrinks to a bar -
+  /// until the stop is near, when the full panel comes back for Arrived. It
+  /// carries on to the next stop after a delivery.
+  bool _navigating = true;
+
+  /// The bar opened to the full stop panel while navigating.
+  bool _panelOpen = false;
+
+  /// The van's last known direction of travel, for the heading-up map.
+  double _heading = 0;
+  NavRoute? _nav;
+  String? _navFor;
+  NavProgress? _progress;
+  bool _navLoading = false;
+
+  /// Shown in the banner while there is no route: "Getting directions..." or
+  /// why it failed. Null once a route is up.
+  String? _navStatus;
+  bool _navFailed = false;
+  DateTime? _navRequestedAt;
+  int _offRouteFixes = 0;
+  final _cues = <String>{};
 
   // The latest run and stops, for the position callback.
   Map<String, dynamic> _run = const {};
@@ -178,11 +217,102 @@ class _DrivingScreenState extends State<DrivingScreen> {
       _position = position;
       _locationProblem = null;
     });
-    if (_follow && _mapReady) {
-      final zoom = _map.camera.zoom < 15.5 ? 16.5 : _map.camera.zoom;
-      _map.move(LatLng(position.latitude, position.longitude), zoom);
-    }
+    // A phone's heading is only trustworthy when it's moving.
+    if (position.speed > 1.5 && position.heading >= 0) _heading = position.heading;
+    _followVan(position);
     _speakIfDue();
+    _guide(position);
+  }
+
+  /// Keeps the van in view. Navigating: heading up, close in, the van low on
+  /// the screen so the road ahead shows. Otherwise: north up.
+  void _followVan(Position position) {
+    if (!_follow || !_mapReady) return;
+    final here = LatLng(position.latitude, position.longitude);
+    if (_navigatingNow) {
+      _map.rotate(-_heading);
+      _map.move(here, 17.5, offset: Offset(0, MediaQuery.sizeOf(context).height * 0.18));
+    } else {
+      if (_map.camera.rotation != 0) _map.rotate(0);
+      _map.move(here, _map.camera.zoom < 15.5 ? 16.5 : _map.camera.zoom);
+    }
+  }
+
+  /// Navigating, with a route up and the stop not yet reached.
+  bool get _navigatingNow {
+    final stop = _current;
+    if (!_navigating || stop == null || _nav == null || _navFor != stop.id) return false;
+    if (_arrived.contains(stop.id) || stop.data['arrived_at'] != null) return false;
+    final meters = _metersTo(stop);
+    return meters == null || !DrivingLogic.isNear(meters, accuracy: _position?.accuracy);
+  }
+
+  /// Turn-by-turn to the current stop: fetch its route once, follow the van
+  /// along it, re-route after two fixes off it, and say each turn.
+  void _guide(Position position) {
+    final stop = _current;
+    final ready = _guidance && _started && !_finished && RoutesClient.available && !_navFailed;
+    if (!ready || stop == null) return;
+    if (_arrived.contains(stop.id) || stop.data['arrived_at'] != null) return; // there: no more directions
+    final here = LatLng(position.latitude, position.longitude);
+    final nav = _nav;
+    if (_navFor != stop.id || nav == null) {
+      _fetchRoute(stop, here, position.heading);
+      return;
+    }
+    final progress = TurnByTurn.progress(nav, here);
+    setState(() => _progress = progress);
+    if (TurnByTurn.isOffRoute(progress, accuracy: position.accuracy)) {
+      if (++_offRouteFixes >= 2) _fetchRoute(stop, here, position.heading, reroute: true);
+      return;
+    }
+    _offRouteFixes = 0;
+    final cue = TurnByTurn.cue(nav, progress, stop.stop.customerName, _cues);
+    if (cue != null) _voice.say(cue, urgent: progress.metersToTurn <= TurnByTurn.nowMeters);
+  }
+
+  Future<void> _fetchRoute(_Stop stop, LatLng here, double heading, {bool reroute = false}) async {
+    final last = _navRequestedAt;
+    final tooSoon = last != null && DateTime.now().difference(last) < const Duration(seconds: 10);
+    if (_navLoading || tooSoon) return;
+    _navLoading = true;
+    _navRequestedAt = DateTime.now();
+    AppLog.auth('directions: requesting', {'stopId': stop.id, 'reroute': reroute, 'located': stop.located});
+    if (mounted && _nav == null) setState(() => _navStatus = 'Getting directions...');
+    try {
+      final nav = await _routes.route(
+        here,
+        to: stop.located ? stop.stop.location : null,
+        address: stop.stop.address,
+        heading: heading,
+      );
+      AppLog.auth('directions: route', {'steps': nav.steps.length, 'meters': nav.distanceMeters});
+      if (!mounted) return;
+      setState(() {
+        _nav = nav;
+        _navFor = stop.id;
+        _navStatus = null;
+        _navFailed = false;
+        _offRouteFixes = 0;
+        _progress = TurnByTurn.progress(nav, here);
+        // A new stop's turns start fresh; a re-route keeps what was said.
+        if (!reroute) _cues.clear();
+      });
+      if (reroute) _voice.say('Recalculating.', urgent: true);
+    } catch (error, stack) {
+      AppLog.auth.error('directions failed', error, stack);
+      if (mounted) {
+        setState(() {
+          _navStatus = error is RoutesException
+              ? error.message
+              : "Couldn't get directions. Check your connection.";
+          // Stop asking on every fix; "Retry" or "Directions" asks again.
+          _navFailed = true;
+        });
+      }
+    } finally {
+      _navLoading = false;
+    }
   }
 
   /// "Next: ..." once per stop, then "Approaching ..." once, close to it.
@@ -233,24 +363,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
   });
 
   Future<void> _arrive(_Stop stop) async {
-    final meters = _metersTo(stop);
-    if (meters != null && !DrivingLogic.isNear(meters, accuracy: _position?.accuracy)) {
-      final go = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Arrived?'),
-          content: Text(
-            'You look to be ${DrivingLogic.distanceLabel(meters)} from ${stop.stop.customerName}. '
-            'Mark it arrived anyway?',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Not yet')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Arrived')),
-          ],
-        ),
-      );
-      if (go != true || !mounted) return;
-    }
     await _attempt('mark it arrived', () async {
       await _writer.arrived(stop.id);
       setState(() => _arrived.add(stop.id));
@@ -286,8 +398,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
     await _attempt('save the delivery', () async {
       await _writer.delivered(stop.id, position: _position, photo: photo);
-      // The stream brings the next stop; say it when it does.
-      _announcedNext = null;
+      // The stream brings the next stop, a different id: it is said when it
+      // arrives. (Clearing what was said would repeat this one meanwhile.)
       final remaining = _stops.where((s) => !s.delivered && s.id != stop.id).length;
       if (remaining == 0) _voice.say(DrivingLogic.doneLine(_stops.length));
     });
@@ -318,30 +430,94 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
   }
 
-  Future<void> _navigate(_Stop stop) async {
-    final destination = stop.located
-        ? '${stop.stop.location.latitude},${stop.stop.location.longitude}'
-        : Uri.encodeComponent(stop.stop.address);
-    final turnByTurn = Uri.parse('google.navigation:q=$destination&mode=d');
-    final web = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1&destination=$destination&travelmode=driving',
-    );
-    if (!await launchUrl(turnByTurn, mode: LaunchMode.externalApplication)) {
-      await launchUrl(web, mode: LaunchMode.externalApplication);
+  /// "Directions": turn-by-turn in the app, from where the van is now.
+  /// "Directions": turn-by-turn in the app, from where the van is now. Asks
+  /// the phone for a fix if none has come in yet - a phone standing still
+  /// indoors may not report one by itself for a long while.
+  Future<void> _directions(_Stop stop) async {
+    AppLog.auth('directions: tapped', {'stopId': stop.id, 'hasFix': _position != null});
+    setState(() {
+      _guidance = true;
+      _follow = true;
+      _navFailed = false;
+      _navRequestedAt = null; // ask now, even if a route was just fetched
+      _navStatus = 'Getting directions...';
+    });
+    var here = _position;
+    if (here == null) {
+      try {
+        here =
+            await Geolocator.getLastKnownPosition() ??
+            await Geolocator.getCurrentPosition(
+              locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.high,
+                timeLimit: Duration(seconds: 15),
+              ),
+            );
+        if (mounted) setState(() => _position = here);
+      } catch (error, stack) {
+        AppLog.auth.error('directions: no location', error, stack);
+      }
     }
+    if (!mounted) return;
+    if (here == null) {
+      setState(() {
+        _navStatus = "Can't find your location - check location is on for Blue Dot.";
+        _navFailed = true;
+      });
+      return;
+    }
+    await _fetchRoute(stop, LatLng(here.latitude, here.longitude), here.heading);
+    if (!mounted) return;
+    if (_nav != null && _navFor == stop.id) {
+      setState(() {
+        _navigating = true;
+        _panelOpen = false;
+      });
+      if (here.heading >= 0 && here.speed > 1.5) _heading = here.heading;
+    }
+    _recentre();
   }
 
+  /// The voice on or off - the button on the map, and the icon in the bar.
+  /// Saved as the driver's setting (Settings -> Voice prompts), so it stays
+  /// as they left it next time. Turning it back on doesn't repeat anything.
   Future<void> _toggleMute() async {
     final on = _voice.muted; // muted now -> turning voice on
     setState(() => _voice.muted = !on);
+    // Back on: carries on from here - nothing already said is said again.
     if (!on) await _voice.stop();
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(on ? 'Voice on' : 'Voice off - tap the speaker to turn it back on'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    }
     await SettingsStore(widget.authState).setVoicePrompts(on);
   }
 
   void _recentre() {
     setState(() => _follow = true);
     final here = _position;
-    if (here != null && _mapReady) _map.move(LatLng(here.latitude, here.longitude), 16.5);
+    if (here != null) _followVan(here);
+  }
+
+  void _showStop(int number, _Stop stop) {
+    showStopDetails(
+      context,
+      number: number,
+      customerName: stop.stop.customerName,
+      address: stop.stop.address,
+      items: stop.stop.items,
+      instructions: stop.stop.instructions,
+      phone: stop.data['phone'] as String?,
+      deliveredAt: (stop.data['delivered_at'] as Timestamp?)?.toDate().toLocal(),
+      photoUrl: stop.data['pod_photo_url'] as String?,
+    );
   }
 
   // --- Build -------------------------------------------------------------------
@@ -376,11 +552,6 @@ class _DrivingScreenState extends State<DrivingScreen> {
       appBar: AppBar(
         title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(
-            tooltip: _voice.muted ? 'Voice off - tap to turn on' : 'Voice on - tap to mute',
-            icon: Icon(_voice.muted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
-            onPressed: _toggleMute,
-          ),
           if (_started && !_finished)
             PopupMenuButton<String>(
               onSelected: (_) => _end(),
@@ -422,6 +593,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     children: [
                       const MapStyleButton(),
                       const SizedBox(height: 8),
+                      // The voice, on the map where a driver's thumb is.
+                      FloatingActionButton.small(
+                        heroTag: 'voice',
+                        tooltip: _voice.muted ? 'Voice off - tap to turn on' : 'Voice on - tap to turn off',
+                        backgroundColor: _voice.muted ? Colors.white : AppColors.brand,
+                        foregroundColor: _voice.muted ? AppColors.inkMuted : Colors.white,
+                        onPressed: _toggleMute,
+                        child: Icon(
+                          _voice.muted ? Icons.volume_off_rounded : Icons.record_voice_over_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
                       FloatingActionButton.small(
                         heroTag: 'recentre',
                         tooltip: 'Follow me',
@@ -433,6 +616,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
                     ],
                   ),
                 ),
+                if (_turnBanner() case final banner?) Positioned(top: 12, left: 12, right: 72, child: banner),
                 Positioned(left: 0, right: 0, bottom: 0, child: _buildPanel()),
               ],
             );
@@ -451,6 +635,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
     // The road still to drive: from the last delivered stop (or the depot)
     // through every stop left, along the run's road shapes where it has them.
+    final navLine = _guidance && _navFor == current?.id ? _nav?.points : null;
     final legs = <List<LatLng>>[];
     String? previousKey = DeliveryEstimate.depotKey;
     LatLng? previous = depot;
@@ -491,11 +676,23 @@ class _DrivingScreenState extends State<DrivingScreen> {
         const BasemapLayer(),
         PolylineLayer(
           polylines: [
+            // With directions, the road from the van to the stop leads; the
+            // rest of the run is drawn faint behind it.
             for (final (index, points) in legs.indexed)
               Polyline(
                 points: points,
-                strokeWidth: index == 0 ? 6 : 4,
-                color: index == 0 ? AppColors.brand : AppColors.brand.withValues(alpha: 0.35),
+                strokeWidth: index == 0 && navLine == null ? 6 : 4,
+                color: index == 0 && navLine == null
+                    ? AppColors.brand
+                    : AppColors.brand.withValues(alpha: 0.35),
+              ),
+            if (navLine != null)
+              Polyline(
+                points: navLine,
+                strokeWidth: 7,
+                color: AppColors.brand,
+                borderStrokeWidth: 2,
+                borderColor: Colors.white,
               ),
           ],
         ),
@@ -504,19 +701,24 @@ class _DrivingScreenState extends State<DrivingScreen> {
             for (final (index, stop) in _stops.indexed)
               if (stop.located)
                 Marker(
+                  rotate: true,
                   point: stop.stop.location,
                   width: stop.id == current?.id ? 44 : 28,
                   height: stop.id == current?.id ? 52 : 28,
                   alignment: stop.id == current?.id ? Alignment.topCenter : Alignment.center,
-                  child: StopPin(
-                    number: index + 1,
-                    compact: stop.id != current?.id,
-                    selected: stop.id == current?.id,
-                    delivered: stop.delivered,
+                  child: GestureDetector(
+                    onTap: () => _showStop(index + 1, stop),
+                    child: StopPin(
+                      number: index + 1,
+                      compact: stop.id != current?.id,
+                      selected: stop.id == current?.id,
+                      delivered: stop.delivered,
+                    ),
                   ),
                 ),
             if (here != null)
               Marker(
+                rotate: true,
                 point: here,
                 width: 46,
                 height: 46,
@@ -534,6 +736,82 @@ class _DrivingScreenState extends State<DrivingScreen> {
         ),
         const BasemapAttribution(atTop: true),
       ],
+    );
+  }
+
+  /// The next turn, over the map: its arrow, how far, and what it is. Tap the
+  /// cross to hide directions (the run carries on; "Directions" brings them
+  /// back).
+  Widget? _turnBanner() {
+    final stop = _current, nav = _nav, progress = _progress;
+    if (!_guidance || stop == null) return null;
+    final status = _navStatus;
+    if (status != null && (nav == null || _navFor != stop.id || _navFailed)) {
+      return Material(
+        color: _navFailed ? AppColors.warning : AppColors.brand,
+        elevation: 4,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+          child: Row(
+            children: [
+              if (_navFailed)
+                const Icon(Icons.error_outline_rounded, color: Colors.white)
+              else
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(status, style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+              ),
+              if (_navFailed)
+                TextButton(
+                  onPressed: () => _directions(stop),
+                  child: const Text('Retry', style: TextStyle(color: Colors.white)),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (nav == null || progress == null || _navFor != stop.id) return null;
+    if (_arrived.contains(stop.id) || stop.data['arrived_at'] != null) return null;
+    final turn = TurnByTurn.ahead(nav, progress, stop.stop.customerName);
+    return Material(
+      color: AppColors.brand,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        child: Row(
+          children: [
+            Icon(TurnByTurn.icon(turn.maneuver), color: Colors.white, size: 34),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    DrivingLogic.distanceLabel(progress.metersToTurn),
+                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800),
+                  ),
+                  Text(
+                    turn.instruction.replaceAll('\n', ' '),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13.5, height: 1.25),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+        ),
+      ),
     );
   }
 
@@ -557,6 +835,45 @@ class _DrivingScreenState extends State<DrivingScreen> {
         onEnd: _end,
         onClose: () => Navigator.of(context).pop(),
       );
+    } else if (_navigatingNow && !_panelOpen) {
+      final nav = _nav!, progress = _progress;
+      final left = progress == null ? null : TurnByTurn.remainingMeters(nav, progress);
+      final time = progress == null ? null : TurnByTurn.remainingTime(nav, progress);
+      final arrive = time == null ? null : DateTime.now().add(time);
+      content = InkWell(
+        onTap: () => setState(() => _panelOpen = true),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    current.stop.customerName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    [
+                      if (left != null) DrivingLogic.distanceLabel(left),
+                      if (time != null) '${(time.inSeconds / 60).ceil()} min',
+                      if (arrive != null) 'arrive ${formatClock(arrive.hour, arrive.minute)}',
+                    ].join(' · '),
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      color: AppColors.brand,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.keyboard_arrow_up_rounded, color: AppColors.inkMuted),
+          ],
+        ),
+      );
     } else {
       final meters = _metersTo(current);
       final here = _position;
@@ -572,7 +889,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
         arrived: _arrived.contains(current.id) || current.data['arrived_at'] != null,
         busy: _busy,
         photos: DeliveryWriter.photosAvailable,
-        onNavigate: () => _navigate(current),
+        navigating: _navigatingNow,
+        noLocation: _locationProblem != null,
+        onCollapse: () => setState(() => _panelOpen = false),
         onArrived: () => _arrive(current),
         onDeliver: (withPhoto) => _deliver(current, withPhoto: withPhoto),
       );
@@ -591,6 +910,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Started without today's run sheet: say whose quantities these are.
+            if (_run['copied_from_date'] case final String date)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Quantities from the $date run sheet - today\'s wasn\'t uploaded.',
+                  style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                ),
+              ),
             if (_locationProblem case final problem?)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
@@ -653,7 +981,9 @@ class _StopPanel extends StatelessWidget {
     required this.arrived,
     required this.busy,
     required this.photos,
-    required this.onNavigate,
+    this.navigating = false,
+    this.noLocation = false,
+    this.onCollapse,
     required this.onArrived,
     required this.onDeliver,
   });
@@ -667,7 +997,14 @@ class _StopPanel extends StatelessWidget {
   final bool arrived;
   final bool busy;
   final bool photos;
-  final VoidCallback onNavigate;
+
+  /// Navigating with the panel opened from the bar: "Hide details" goes back
+  /// to the bar.
+  final bool navigating;
+
+  /// The phone can't tell where it is: Arrived is offered anyway.
+  final bool noLocation;
+  final VoidCallback? onCollapse;
   final VoidCallback onArrived;
   final void Function(bool withPhoto) onDeliver;
 
@@ -715,31 +1052,23 @@ class _StopPanel extends StatelessWidget {
           Text(note, style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic)),
         ],
         const SizedBox(height: 12),
-        if (!arrived)
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onNavigate,
-                  icon: const Icon(Icons.navigation_rounded),
-                  label: const Text('Navigate'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                // Offered by itself once close; still there (and asks) when
-                // the GPS disagrees.
-                child: near
-                    ? FilledButton.icon(
-                        onPressed: busy ? null : onArrived,
-                        icon: const Icon(Icons.place_rounded),
-                        label: const Text('Arrived'),
-                      )
-                    : OutlinedButton(onPressed: busy ? null : onArrived, child: const Text('Arrived?')),
-              ),
-            ],
-          )
-        else ...[
+        if (!arrived) ...[
+          // Arrived only at the stop - or when the phone can't tell where it
+          // is, so the driver is never stuck. Never from kilometres away.
+          if (near || noLocation)
+            FilledButton.icon(
+              onPressed: busy ? null : onArrived,
+              icon: const Icon(Icons.place_rounded),
+              label: const Text('Arrived'),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+            )
+          else if (navigating)
+            TextButton.icon(
+              onPressed: onCollapse,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              label: const Text('Hide details'),
+            ),
+        ] else ...[
           if (photos)
             FilledButton.icon(
               onPressed: busy ? null : () => onDeliver(true),

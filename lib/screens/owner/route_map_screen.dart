@@ -205,10 +205,14 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                   onStopTap: (index) => _showStop(context, stopDocsById[stops[index].id]),
                 ),
               ),
+              // Swipe down for the whole map, up for the list; it snaps to
+              // map only, the start height, or most of the screen.
               DraggableScrollableSheet(
                 initialChildSize: 0.22,
-                minChildSize: 0.12,
-                maxChildSize: 0.7,
+                minChildSize: 0.1,
+                maxChildSize: 0.9,
+                snap: true,
+                snapSizes: const [0.22],
                 builder: (context, scrollController) => Container(
                   decoration: const BoxDecoration(
                     color: Colors.white,

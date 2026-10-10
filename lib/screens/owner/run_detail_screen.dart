@@ -11,6 +11,7 @@ import '../../models/run_time.dart';
 import '../../services/depot_locator.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/map_with_sheet.dart';
 import '../../widgets/route_preview_map.dart';
 import '../../widgets/stop_instructions_sheet.dart';
 import 'run_photos_screen.dart';
@@ -108,24 +109,8 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
 
               return FutureBuilder<LatLng?>(
                 future: _depot(run),
-                builder: (context, depotSnap) => Column(
-                  children: [
-                    SizedBox(
-                      height: MediaQuery.sizeOf(context).height * 0.38,
-                      child: RoutePreviewMap(
-                        stops: stops,
-                        depot: depotSnap.data,
-                        highlight: _highlight,
-                        roadLegs: _roadLegsFor(run),
-                        deliveredIds: delivered,
-                        onStopTap: (index) => _openStop(byId[stops[index].id]),
-                      ),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 24),
-                        itemCount: docs.length + 1,
-                        itemBuilder: (context, index) {
+                builder: (context, depotSnap) {
+                  Widget row(int index) {
                           if (index == 0) {
                             return _Header(
                               listing: listing,
@@ -195,11 +180,22 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                                   )
                                 : null,
                           );
-                        },
-                      ),
+                  }
+
+                  // Swipe the list down for the whole map.
+                  return MapWithSheet(
+                    map: RoutePreviewMap(
+                      stops: stops,
+                      depot: depotSnap.data,
+                      highlight: _highlight,
+                      roadLegs: _roadLegsFor(run),
+                      deliveredIds: delivered,
+                      attributionAtTop: true,
+                      onStopTap: (index) => _openStop(byId[stops[index].id]),
                     ),
-                  ],
-                ),
+                    children: [for (var index = 0; index <= docs.length; index++) row(index)],
+                  );
+                },
               );
             },
           );

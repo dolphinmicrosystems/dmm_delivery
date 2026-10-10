@@ -5,10 +5,14 @@ import 'package:latlong2/latlong.dart';
 import '../models/run_stop.dart';
 import '../models/run_time.dart';
 import '../services/depot_locator.dart';
+import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
+import '../widgets/map_with_sheet.dart';
 import '../widgets/route_preview_map.dart';
+import '../widgets/stop_details_sheet.dart';
 import '../widgets/surface_card.dart';
+import 'route_starter.dart';
 
 /// One of the driver's routes as planned: the stops in order on the map, when
 /// it runs and in which vehicle.
@@ -17,8 +21,12 @@ import '../widgets/surface_card.dart';
 /// a route can see where it goes the day they are given it. It is read from
 /// the route card (`circuits.stops_summary` - name, address, order) and the
 /// geocode cache (`addresses`, for each stop's pin), both of which a driver may
-/// read. What to deliver at each stop is on the day's run (DriverRunScreen),
-/// once the owner uploads its sheet.
+/// read. The card also carries what to deliver and the instructions (from the
+/// latest sheet), shown when a stop is tapped.
+///
+/// When the driver is scheduled on the route today, "Start this route today"
+/// gets today's run from the backend and opens the driving screen
+/// (startRouteToday) - with no run sheet uploaded, the run is the last one's.
 class DriverRouteScreen extends StatefulWidget {
   const DriverRouteScreen({
     super.key,
@@ -27,6 +35,8 @@ class DriverRouteScreen extends StatefulWidget {
     this.startTime,
     this.endTime,
     this.vehicle,
+    this.authState,
+    this.canStartToday = false,
   });
 
   final String roundKey;
@@ -34,6 +44,11 @@ class DriverRouteScreen extends StatefulWidget {
   final String? startTime;
   final String? endTime;
   final String? vehicle;
+
+  /// For "Start this route today"; shown only when [canStartToday] - the
+  /// driver is the one scheduled on the route today.
+  final AuthState? authState;
+  final bool canStartToday;
 
   @override
   State<DriverRouteScreen> createState() => _DriverRouteScreenState();
@@ -83,6 +98,24 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
     );
   }
 
+  /// A stop from the route card. Cards written before items and instructions
+  /// were added to it have neither; the note says where to find them.
+  void _showStop(int number, Map<String, dynamic> stop) {
+    final hasItems = stop.containsKey('items');
+    showStopDetails(
+      context,
+      number: number,
+      customerName: stop['customer_name'] as String? ?? '',
+      address: stop['address'] as String? ?? '',
+      items: [
+        for (final raw in (stop['items'] as List?) ?? const [])
+          if (raw is Map) StopItem.fromMap(Map<String, dynamic>.from(raw)),
+      ],
+      instructions: stop['instructions'] as String?,
+      missingItemsNote: hasItems ? null : "Shows here once the route's next run sheet is confirmed.",
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -100,15 +133,53 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
           }
           final route = snapshot.data;
           if (route == null) return const Center(child: Text('This route has been removed.'));
-          return ListView(
-            padding: const EdgeInsets.only(bottom: 24),
+          return MapWithSheet(
+            // Swipe the list down for the whole map; tap a stop for its details.
+            // This map is the plan; "Start" opens the live one.
+            overlay: widget.canStartToday && widget.authState != null
+                ? FloatingActionButton.extended(
+                    heroTag: 'start',
+                    onPressed: () => startRouteToday(
+                      context,
+                      authState: widget.authState!,
+                      roundKey: widget.roundKey,
+                      routeName: widget.routeName,
+                      vehicle: widget.vehicle,
+                    ),
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Start'),
+                  )
+                : null,
+            map: RoutePreviewMap(
+              stops: route.stops,
+              depot: route.depot,
+              highlight: _highlight,
+              attributionAtTop: true,
+              onStopTap: (index) {
+                final key = route.stops[index].addressKey;
+                final at = route.summary.indexWhere((stop) => stop['address_key'] == key);
+                if (at >= 0) _showStop(at + 1, route.summary[at]);
+              },
+            ),
             children: [
-              SizedBox(
-                height: MediaQuery.sizeOf(context).height * 0.34,
-                child: RoutePreviewMap(stops: route.stops, depot: route.depot, highlight: _highlight),
-              ),
+              if (widget.canStartToday && widget.authState != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: FilledButton.icon(
+                    onPressed: () => startRouteToday(
+                      context,
+                      authState: widget.authState!,
+                      roundKey: widget.roundKey,
+                      routeName: widget.routeName,
+                      vehicle: widget.vehicle,
+                    ),
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Start this route today'),
+                    style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                  ),
+                ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: SurfaceCard(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -138,8 +209,7 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
                         ),
                       const SizedBox(height: 6),
                       const Text(
-                        'The route as planned. What to deliver at each stop shows on the day\'s run, '
-                        'under Runs, once your owner uploads its run sheet.',
+                        'Tap a stop for what to deliver and the instructions (from the latest run sheet).',
                         style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
                       ),
                     ],
@@ -150,8 +220,10 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
                 ListTile(
                   onTap: () {
                     final pinned = route.stops.where((s) => s.addressKey == stop['address_key']);
-                    if (pinned.isEmpty) return;
-                    setState(() => _highlight = StopHighlight.after(_highlight, pinned.first.id));
+                    if (pinned.isNotEmpty) {
+                      setState(() => _highlight = StopHighlight.after(_highlight, pinned.first.id));
+                    }
+                    _showStop(index + 1, stop);
                   },
                   leading: StopPin(number: index + 1, compact: true),
                   title: Text(

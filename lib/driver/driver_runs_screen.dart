@@ -115,7 +115,13 @@ class _CardList extends StatelessWidget {
                 card: card,
                 now: now,
                 vehicle: vehicle,
-                onTap: () => openDriverCard(context, authState, card, vehicle: vehicle),
+                onTap: () => openDriverCard(
+                  context,
+                  authState,
+                  card,
+                  vehicle: vehicle,
+                  canStartToday: phase == RunPhase.today,
+                ),
               )
             : _RunCard(
                 card: card,

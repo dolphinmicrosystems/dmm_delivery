@@ -11,6 +11,7 @@ import '../widgets/surface_card.dart';
 import 'driver_data.dart';
 import 'driver_navigation.dart';
 import 'driver_schedule.dart';
+import 'route_starter.dart';
 
 /// The driver's Home tab: the run that is live now, big - or, with none under
 /// way, the next one to drive and when it starts - then what follows.
@@ -38,9 +39,23 @@ class DriverHomeScreen extends StatelessWidget {
     );
     final home = DriverSchedule.home(cards, now);
     final vehicle = data.vehicle?.description;
-    void open(DriverRunCard card) => canDrive(card, now)
-        ? openDriving(context, authState, card, vehicle: vehicle)
-        : openDriverCard(context, authState, card, vehicle: vehicle);
+    bool isToday(DateTime? day) => day != null && relativeDayLabel(day, now) == 'Today';
+    void open(DriverRunCard card) {
+      if (canDrive(card, now)) {
+        openDriving(context, authState, card, vehicle: vehicle);
+      } else if (card.run == null && isToday(card.day)) {
+        // Booked today with no run sheet yet: start it all the same.
+        startRouteToday(
+          context,
+          authState: authState,
+          roundKey: card.booking!.roundKey,
+          routeName: card.routeName,
+          vehicle: vehicle,
+        );
+      } else {
+        openDriverCard(context, authState, card, vehicle: vehicle);
+      }
+    }
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
@@ -222,7 +237,12 @@ class _NextCard extends StatelessWidget {
             child: OutlinedButton.icon(
               onPressed: onOpen,
               icon: const Icon(Icons.map_outlined),
-              label: Text(run == null ? 'See the route' : (canDrive(card, now) ? 'Start run' : 'Open run')),
+              label: Text(switch ((run, canDrive(card, now))) {
+                (null, _) when relativeDayLabel(card.day, now) == 'Today' => 'Start route',
+                (null, _) => 'See the route',
+                (_, true) => 'Start run',
+                _ => 'Open run',
+              }),
             ),
           ),
         ],

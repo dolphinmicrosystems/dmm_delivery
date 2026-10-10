@@ -12,7 +12,9 @@ import '../services/depot_locator.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../widgets/pill_badge.dart';
+import '../widgets/map_with_sheet.dart';
 import '../widgets/route_preview_map.dart';
+import '../widgets/stop_details_sheet.dart';
 import '../widgets/surface_card.dart';
 import 'driver_runs_screen.dart';
 import 'driving/driving_screen.dart';
@@ -68,6 +70,23 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
     return _depotFuture ??= DepotLocator().resolve(run?['depot_address'] as String?);
   }
 
+  void _showStop(int number, Map<String, dynamic> data) {
+    showStopDetails(
+      context,
+      number: number,
+      customerName: data['customer_name'] as String? ?? '',
+      address: data['address'] as String? ?? '',
+      items: [
+        for (final raw in (data['items'] as List?) ?? const [])
+          if (raw is Map) StopItem.fromMap(Map<String, dynamic>.from(raw)),
+      ],
+      instructions: data['instructions'] as String?,
+      phone: data['phone'] as String?,
+      deliveredAt: (data['delivered_at'] as Timestamp?)?.toDate().toLocal(),
+      photoUrl: data['pod_photo_url'] as String?,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final runRef = FirebaseFirestore.instance.collection('delivery_run').doc(widget.runId);
@@ -100,32 +119,44 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
 
               return FutureBuilder<LatLng?>(
                 future: _depot(run),
-                builder: (context, depotSnap) => ListView(
-                  padding: const EdgeInsets.only(bottom: 24),
+                builder: (context, depotSnap) => MapWithSheet(
+                  // Swipe the list down for the whole map; tap a stop for
+                  // what to deliver there. This map is the plan; "Drive"
+                  // opens the live one - the van, the voice, Arrived.
+                  overlay: listing.phase(DateTime.now()) == RunPhase.today && listing.finished == null
+                      ? FloatingActionButton.extended(
+                          heroTag: 'drive',
+                          onPressed: () => Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => DrivingScreen(
+                                authState: widget.authState,
+                                runId: widget.runId,
+                                routeName: widget.routeName,
+                                vehicle: widget.vehicle,
+                              ),
+                            ),
+                          ),
+                          icon: const Icon(Icons.navigation_rounded),
+                          label: Text(listing.started == null ? 'Start run' : 'Drive'),
+                        )
+                      : null,
+                  map: RoutePreviewMap(
+                    stops: stops,
+                    depot: depotSnap.data,
+                    highlight: _highlight,
+                    roadLegs: _roadLegsFor(run),
+                    deliveredIds: delivered,
+                    attributionAtTop: true,
+                    onStopTap: (index) {
+                      final doc = docs.firstWhere((d) => d.id == stops[index].id);
+                      _showStop(docs.indexOf(doc) + 1, doc.data());
+                    },
+                  ),
                   children: [
-                    SizedBox(
-                      height: MediaQuery.sizeOf(context).height * 0.32,
-                      child: RoutePreviewMap(
-                        stops: stops,
-                        depot: depotSnap.data,
-                        highlight: _highlight,
-                        roadLegs: _roadLegsFor(run),
-                        deliveredIds: delivered,
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: _Summary(
-                        listing: listing,
-                        startTime: widget.startTime,
-                        endTime: widget.endTime,
-                        vehicle: widget.vehicle,
-                      ),
-                    ),
-                    // Today's run, not finished: drive it from here too.
+                    // Today's run, not finished: drive it from here.
                     if (listing.phase(DateTime.now()) == RunPhase.today && listing.finished == null)
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                         child: FilledButton.icon(
                           onPressed: () => Navigator.of(context).pushReplacement(
                             MaterialPageRoute(
@@ -143,9 +174,18 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                         ),
                       ),
                     Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: _Summary(
+                        listing: listing,
+                        startTime: widget.startTime,
+                        endTime: widget.endTime,
+                        vehicle: widget.vehicle,
+                      ),
+                    ),
+                    Padding(
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
                       child: Text(
-                        '${docs.length} stops',
+                        '${docs.length} stops - tap one for what to deliver',
                         style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                       ),
                     ),
@@ -153,7 +193,10 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                       _StopRow(
                         number: index + 1,
                         data: doc.data(),
-                        onTap: () => setState(() => _highlight = StopHighlight.after(_highlight, doc.id)),
+                        onTap: () {
+                          setState(() => _highlight = StopHighlight.after(_highlight, doc.id));
+                          _showStop(index + 1, doc.data());
+                        },
                       ),
                   ],
                 ),
