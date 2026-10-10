@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../models/delivery_estimate.dart';
 import '../models/driver_stats.dart';
 import '../models/run_time.dart';
+import '../models/run_timing.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
-import '../widgets/pill_badge.dart';
+import '../widgets/run_timing_pill.dart';
 import '../widgets/section_label.dart';
 import '../widgets/surface_card.dart';
 import 'driver_data.dart';
@@ -119,6 +120,9 @@ class _LiveCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final run = card.run!;
     final started = run.started?.toLocal();
+    // The same "On time" / "12 min late" the owner sees.
+    final timing = RunTiming.of(run: run, startTime: card.start, endTime: card.end, now: now);
+    final projected = timing.projectedFinish;
     return SurfaceCard(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -132,7 +136,7 @@ class _LiveCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                 ),
               ),
-              const PillBadge(label: 'Live', background: AppColors.brandSoft, foreground: AppColors.brand),
+              RunTimingPill(timing),
             ],
           ),
           const SizedBox(height: 4),
@@ -140,6 +144,8 @@ class _LiveCard extends StatelessWidget {
             [
               if (started != null) 'Started ${formatClock(started.hour, started.minute)}',
               if (card.end case final end?) 'finish by ${formatStartTime(end)}',
+              if (projected != null && !{TimingKind.noSignal, TimingKind.left}.contains(timing.kind))
+                'at this pace ~${formatClock(projected.hour, projected.minute)}',
             ].join(' · '),
             style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
           ),
@@ -200,6 +206,11 @@ class _NextCard extends StatelessWidget {
     final run = card.run;
     final estimate = run?.estimatedTotal;
     final countdown = _countdown(card, now);
+    // Past its start with nothing done: "Not started - 15 min late".
+    final timing = run == null
+        ? null
+        : RunTiming.of(run: run, startTime: card.start, endTime: card.end, now: now);
+    final lateStart = timing?.kind == TimingKind.lateStart ? timing : null;
     return SurfaceCard(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -216,7 +227,9 @@ class _NextCard extends StatelessWidget {
             ].join(' · '),
             style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
           ),
-          if (countdown != null)
+          if (lateStart != null)
+            Padding(padding: const EdgeInsets.only(top: 8), child: RunTimingPill(lateStart))
+          else if (countdown != null)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(countdown, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),

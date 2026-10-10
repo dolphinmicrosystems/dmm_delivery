@@ -7,10 +7,11 @@ import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
 import '../../widgets/pill_badge.dart';
 import '../../widgets/section_label.dart';
+import 'live_runs_section.dart';
 import 'owner_drivers_screen.dart';
 
-/// The Owner's landing screen, ported from owner-home.html: a greeting and
-/// three quick actions, rather than a data list. The route list that used to
+/// The Owner's landing screen, ported from owner-home.html: a greeting, the
+/// runs on the road right now (LiveRunsSection), and three quick actions. The route list that used to
 /// live here is the Routes tab, which "Update routes" switches to.
 class OwnerHomeScreen extends StatelessWidget {
   const OwnerHomeScreen({super.key, required this.authState, required this.onOpenRoutes});
@@ -43,6 +44,7 @@ class OwnerHomeScreen extends StatelessWidget {
         const SizedBox(height: 4),
         const Text("Run today's deliveries.", style: TextStyle(fontSize: 14, color: AppColors.inkMuted)),
         const SizedBox(height: 20),
+        LiveRunsSection(authState: authState),
         const SectionLabel('Quick actions'),
         const SizedBox(height: 12),
         _QuickAction(

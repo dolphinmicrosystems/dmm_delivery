@@ -24,8 +24,10 @@ class DriverAlertsCard extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         SwitchSettingCard(
-          title: 'Late starts',
-          subtitle: "A notification when a driver hasn't started a run 10 minutes after its start time.",
+          title: 'Late and stopped runs',
+          subtitle:
+              "A notification when a driver hasn't started 10 minutes after the start time, is running "
+              "15 minutes or more behind, or their app stops reporting for 20 minutes.",
           value: settings.lateStartAlerts(),
           onChanged: settings.setLateStartAlerts,
           what: 'late start alerts',

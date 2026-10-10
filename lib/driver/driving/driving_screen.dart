@@ -12,7 +12,9 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../models/delivery_estimate.dart';
 import '../../models/road_legs.dart';
 import '../../models/run_stop.dart';
+import '../../models/run_listing.dart';
 import '../../models/run_time.dart';
+import '../../models/run_timing.dart';
 import '../../settings/settings_store.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
@@ -20,10 +22,12 @@ import '../../util/app_log.dart';
 import '../../widgets/basemap.dart';
 import '../../widgets/basemap_attribution.dart';
 import '../../widgets/route_preview_map.dart';
+import '../../widgets/run_timing_pill.dart';
 import '../../widgets/stop_details_sheet.dart';
 import 'delivery_writer.dart';
 import 'driving_logic.dart';
 import 'photo_stamp.dart';
+import 'run_heartbeat.dart';
 import 'routes_client.dart';
 import 'turn_by_turn.dart';
 import 'voice_guide.dart';
@@ -48,12 +52,19 @@ class DrivingScreen extends StatefulWidget {
     required this.authState,
     required this.runId,
     required this.routeName,
+    this.startTime,
+    this.endTime,
     this.vehicle,
   });
 
   final AuthState authState;
   final String runId;
   final String routeName;
+
+  /// The schedule's times for the day ("HH:MM"), for "On time" / "12 min
+  /// late"; null when unknown.
+  final String? startTime;
+  final String? endTime;
   final String? vehicle;
 
   @override
@@ -80,6 +91,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
   late final DeliveryWriter _writer = DeliveryWriter(
     runId: widget.runId,
     ownerUid: widget.authState.ownerUid ?? '',
+  );
+  late final RunHeartbeat _heartbeat = RunHeartbeat(
+    runId: widget.runId,
+    ownerUid: widget.authState.ownerUid ?? '',
+    riderId: widget.authState.user?.uid ?? '',
   );
   late final DocumentReference<Map<String, dynamic>> _runRef = FirebaseFirestore.instance
       .collection('delivery_run')
@@ -126,6 +142,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   /// The van's last known direction of travel, for the heading-up map.
   double _heading = 0;
+
+  /// The top bar (back, run name, End run) is hidden while driving, so the
+  /// map has the screen. A tap on the map shows it; another tap hides it.
+  bool _chrome = false;
+
+  void _toggleChrome() => setState(() => _chrome = !_chrome);
+
   NavRoute? _nav;
   String? _navFor;
   NavProgress? _progress;
@@ -147,6 +170,20 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   bool get _started => _run['driver_started_at'] != null || _run['started_at'] != null;
   bool get _finished => _run['completed_at'] != null || _run['driver_ended_at'] != null;
+
+  /// The run against its schedule - the same words the owner sees - while
+  /// under way. This screen is the heartbeat, so it is never "no signal" here.
+  RunTiming? get _timing {
+    if (!_started || _finished) return null;
+    final now = DateTime.now();
+    return RunTiming.of(
+      run: RunListing.fromMap(widget.runId, _run),
+      startTime: widget.startTime,
+      endTime: widget.endTime,
+      lastSeen: now,
+      now: now,
+    );
+  }
 
   _Stop? get _current {
     final index = DrivingLogic.currentIndex(
@@ -173,11 +210,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
       if (mounted) setState(() => _voice.muted = !on);
     });
     _startLocation();
+    _heartbeat.start(position: () => _position, active: () => _started && !_finished);
   }
 
   @override
   void dispose() {
     _positionSub?.cancel();
+    _heartbeat.stop();
     _voiceSetting?.cancel();
     _voice.stop();
     WakelockPlus.disable();
@@ -546,81 +585,158 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
+  /// Set once "Leave" is confirmed, so a second back press doesn't ask again.
+  bool _leaving = false;
+  bool _resumeChecked = false;
+
+  /// Back (the top bar's arrow or the phone's back gesture) on a run under
+  /// way asks first, and the owner hears that the driver left. A run not
+  /// started, or finished, just closes.
+  Future<void> _confirmLeave() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave the run?'),
+        content: Text(
+          '${widget.routeName} is still under way. Your owner will be told you left. '
+          'Open it again to carry on from where you are.',
+        ),
         actions: [
-          if (_started && !_finished)
-            PopupMenuButton<String>(
-              onSelected: (_) => _end(),
-              itemBuilder: (_) => const [PopupMenuItem(value: 'end', child: Text('End run'))],
-            ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, 'end'), child: const Text('End run')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, 'leave'), child: const Text('Leave')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Stay')),
         ],
       ),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: _runStream,
-        builder: (context, runSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _stopsStream,
-          builder: (context, stopsSnap) {
-            if (runSnap.hasError || stopsSnap.hasError) {
-              return const Center(child: Text("This run isn't yours to drive."));
-            }
-            if (!runSnap.hasData || !stopsSnap.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            _run = runSnap.data!.data() ?? const {};
-            _stops = [
-              for (final (index, doc) in stopsSnap.data!.docs.indexed)
-                if (doc.data()['excluded'] != true) _toStop(doc, index),
-            ];
-            if (!identical(_run['road_legs'], _roadSource)) {
-              _roadSource = _run['road_legs'];
-              _road = RoadLegs.fromRun(_roadSource);
-            }
-            // A newly arrived stop list (a delivery landing) may need saying.
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _speakIfDue();
-            });
-            return Stack(
-              children: [
-                Positioned.fill(child: _buildMap()),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: Column(
-                    children: [
-                      const MapStyleButton(),
-                      const SizedBox(height: 8),
-                      // The voice, on the map where a driver's thumb is.
-                      FloatingActionButton.small(
-                        heroTag: 'voice',
-                        tooltip: _voice.muted ? 'Voice off - tap to turn on' : 'Voice on - tap to turn off',
-                        backgroundColor: _voice.muted ? Colors.white : AppColors.brand,
-                        foregroundColor: _voice.muted ? AppColors.inkMuted : Colors.white,
-                        onPressed: _toggleMute,
-                        child: Icon(
-                          _voice.muted ? Icons.volume_off_rounded : Icons.record_voice_over_rounded,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      FloatingActionButton.small(
-                        heroTag: 'recentre',
-                        tooltip: 'Follow me',
-                        backgroundColor: _follow ? AppColors.brand : Colors.white,
-                        foregroundColor: _follow ? Colors.white : AppColors.brand,
-                        onPressed: _recentre,
-                        child: const Icon(Icons.my_location_rounded),
-                      ),
-                    ],
+    );
+    if (!mounted) return;
+    switch (choice) {
+      case 'end':
+        await _end();
+      case 'leave':
+        // Not awaited: offline, the write waits in Firestore's queue and
+        // goes when there is signal; the driver shouldn't wait for it.
+        _writer.left().catchError((Object error, StackTrace stack) {
+          AppLog.auth.error('leave run failed', error, stack);
+        });
+        _leaving = true;
+        Navigator.of(context).pop();
+    }
+  }
+
+  /// Reopened after "Leave": tell the owner the driver is back. Once per
+  /// screen, on the first look at the run.
+  void _resumeIfLeft() {
+    if (_resumeChecked) return;
+    _resumeChecked = true;
+    if (_started && !_finished && RunListing.fromMap(widget.runId, _run).hasLeft) {
+      _writer.resumed().catchError((Object error, StackTrace stack) {
+        AppLog.auth.error('resume run failed', error, stack);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Decided at the moment of the back press, from the latest run: the run
+    // stream rebuilds only its own subtree, so a canPop worked out here
+    // could be a snapshot behind.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_leaving || !_started || _finished) {
+          Navigator.of(context).pop();
+        } else {
+          _confirmLeave();
+        }
+      },
+      child: _scaffold(context),
+    );
+  }
+
+  Widget _scaffold(BuildContext context) {
+    return Scaffold(
+      appBar: _chrome
+          ? AppBar(
+              title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
+              actions: [
+                if (_started && !_finished)
+                  PopupMenuButton<String>(
+                    onSelected: (_) => _end(),
+                    itemBuilder: (_) => const [PopupMenuItem(value: 'end', child: Text('End run'))],
                   ),
-                ),
-                if (_turnBanner() case final banner?) Positioned(top: 12, left: 12, right: 72, child: banner),
-                Positioned(left: 0, right: 0, bottom: 0, child: _buildPanel()),
               ],
-            );
-          },
+            )
+          : null,
+      // Without the bar, keep the map (and its credits) below the status bar.
+      body: SafeArea(
+        top: !_chrome,
+        bottom: false,
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _runStream,
+          builder: (context, runSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _stopsStream,
+            builder: (context, stopsSnap) {
+              if (runSnap.hasError || stopsSnap.hasError) {
+                return const Center(child: Text("This run isn't yours to drive."));
+              }
+              if (!runSnap.hasData || !stopsSnap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              _run = runSnap.data!.data() ?? const {};
+              _resumeIfLeft();
+              _stops = [
+                for (final (index, doc) in stopsSnap.data!.docs.indexed)
+                  if (doc.data()['excluded'] != true) _toStop(doc, index),
+              ];
+              if (!identical(_run['road_legs'], _roadSource)) {
+                _roadSource = _run['road_legs'];
+                _road = RoadLegs.fromRun(_roadSource);
+              }
+              // A newly arrived stop list (a delivery landing) may need saying.
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _speakIfDue();
+              });
+              return Stack(
+                children: [
+                  Positioned.fill(child: _buildMap()),
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: Column(
+                      children: [
+                        const MapStyleButton(),
+                        const SizedBox(height: 8),
+                        // The voice, on the map where a driver's thumb is.
+                        FloatingActionButton.small(
+                          heroTag: 'voice',
+                          tooltip: _voice.muted ? 'Voice off - tap to turn on' : 'Voice on - tap to turn off',
+                          backgroundColor: _voice.muted ? Colors.white : AppColors.brand,
+                          foregroundColor: _voice.muted ? AppColors.inkMuted : Colors.white,
+                          onPressed: _toggleMute,
+                          child: Icon(
+                            _voice.muted ? Icons.volume_off_rounded : Icons.record_voice_over_rounded,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        FloatingActionButton.small(
+                          heroTag: 'recentre',
+                          tooltip: 'Follow me',
+                          backgroundColor: _follow ? AppColors.brand : Colors.white,
+                          foregroundColor: _follow ? Colors.white : AppColors.brand,
+                          onPressed: _recentre,
+                          child: const Icon(Icons.my_location_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_turnBanner() case final banner?)
+                    Positioned(top: 12, left: 12, right: 72, child: banner),
+                  Positioned(left: 0, right: 0, bottom: 0, child: _buildPanel()),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -667,6 +783,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
         maxZoom: 19,
         interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
         onMapReady: () => _mapReady = true,
+        // A tap on the map shows the top bar (back, End run); another hides it.
+        onTap: (_, _) => _toggleChrome(),
         // Dragging the map stops it following the van until "Follow me".
         onPositionChanged: (camera, hasGesture) {
           if (hasGesture && _follow) setState(() => _follow = false);
@@ -910,19 +1028,24 @@ class _DrivingScreenState extends State<DrivingScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Started without today's run sheet: say whose quantities these are.
-            if (_run['copied_from_date'] case final String date)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  'Quantities from the $date run sheet - today\'s wasn\'t uploaded.',
-                  style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
-                ),
-              ),
             if (_locationProblem case final problem?)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(problem, style: const TextStyle(fontSize: 12, color: AppColors.warning)),
+              ),
+            if (_timing case final timing?)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    RunTimingPill(timing),
+                    const Spacer(),
+                    Text(
+                      '${_stops.where((s) => s.delivered).length} of ${_stops.length} delivered',
+                      style: const TextStyle(fontSize: 12, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
               ),
             content,
           ],

@@ -17,7 +17,7 @@ The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + 
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
 name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
 `build_rider_board.py`) — those names are the contract. Its tests run with
-`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (121 tests). Several features span both repos —
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (411 tests). Several features span both repos —
 route naming and the stop-order merge below are the current examples — and a client change that writes a
 new Firestore field is inert until that repo's `firestore.rules` is deployed.
 
@@ -34,7 +34,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (262 tests, all passing)
+- Run all tests: `flutter test` (270 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -129,7 +129,8 @@ DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-writte
                          + vehicles (VehicleService: assign / change / remove / add, one per driver)
 SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the account card → OwnerProfileScreen
                          + user_settings/{uid}.driver_presence_alerts ("Driver online / offline")
-                         + user_settings/{uid}.late_start_alerts ("Late starts", from run-alerts)
+                         + user_settings/{uid}.late_start_alerts ("Late and stopped runs", from run-alerts:
+                           late starts, running late, and an app that stopped reporting)
                          + app_settings/{owner}.default_stop_seconds ("Time at each stop": what
                          an unlearned address costs in every estimate)
                          + app_settings/{owner}.invitation_ttl_days (the invitation deadline: how long
@@ -155,7 +156,27 @@ are deleted.
   (`RouteAssignment.activeAt` at midday).
 - **Excluded from the list:** runs of deleted routes, and `superseded` runs (replaced by a same-day
   re-upload).
-- **No van position is drawn:** nothing reports GPS yet, and the screen says so.
+- **On time or late** (`RunTiming`, `lib/models/run_timing.dart`, tested in `test/run_timing_test.dart`).
+  One rule for every screen, owner and driver, so both always read the same words:
+  - **States:** "Not started", "Not started - 15 min late" (10 min past the start), "On time",
+    "12 min late", "No signal since 6:40 am", "Finished 20 min late", "Not finished".
+  - **Expected finish:** the schedule's `end_time`, else start + `estimated_total_s`.
+  - **Projected finish:** now + the estimate's share for the stops left; late from 5 minutes over.
+  - **No signal:** 20 minutes since the latest of the start, the last delivery and the heartbeat
+    (`run_live.last_seen_at`).
+  - The thresholds mirror the backend's `domain/run_alerts.py`, which sends the matching alerts. Change
+    both together.
+  - Shown as `RunTimingPill` on Home's Live now, the Runs tab cards, the run screen header, the driver's
+    Home card and the driving screen.
+- **Home's "Live now"** (`live_runs_section.dart`): today's runs on the road, plus any that should have
+  started and haven't, problems first. Each shows the driver, the vehicle (`vehicles` by
+  `assigned_driver_uid`), progress, next stop and back-by time. Hidden when there is nothing to watch.
+  `OwnerRunDataBuilder` (`owner_run_data.dart`) loads the runs, routes, schedule, names and vehicles for it
+  and the Runs tab; `RunLiveBuilder` reads `run_live` for the runs under way (by id, at most 30).
+- **The heartbeat** (`lib/driver/driving/run_heartbeat.dart`): while a started run's driving screen is
+  open, it writes `run_live/{runId}` once a minute (server time, plus the van's position). Closing the
+  app, a flat battery and no signal all show as silence. The van position isn't drawn on the owner's map
+  yet; the data is there for it.
 
 **Map data is data, never an image.** The client owns the viewport and renders tiles, overlays and
 markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps below).
@@ -410,15 +431,26 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
       - **Leaving navigation mode.** It ends by itself near the stop, where the full panel comes back for
         Arrived, and resumes for the next stop after a delivery.
       - **Nothing to dismiss.** The turn banner can't be closed, as in Google Maps.
+      - **No top bar while driving.** A tap on the map shows it (back, run name, End run) and another hides it; the
+        map sits below the status bar (`SafeArea`) so its credits stay visible.
+      - **A copied run isn't labelled** on the driving screen. The run still carries `copied_from_date`
+        for the owner.
       - **Voice on/off lives on the map only,** not in the top bar.
       - The logic is pure and tested (`test/turn_by_turn_test.dart`).
     - **The voice queues** (`VoiceGuide`): lines are said in order, and `urgent` lines clear the queue.
+    - **Back asks first** on a run under way (`PopScope`, decided at the press from the latest run):
+      "Leave the run?" with Stay / Leave / End run. Leave writes `driver_left_at` and the owners are told
+      (notify-run); reopening the run writes `driver_resumed_at` ("Ana is back on ..."). A run not
+      started or finished just closes. Owners see "Left at 6:40 am" (`TimingKind.left`) meanwhile.
+    - **Heartbeat and timing.** While a started run is open it beats `run_live` every minute
+      (`RunHeartbeat`), and the panel shows the same `RunTimingPill` as the owner sees, with "n of N
+      delivered". It is given the schedule's `startTime`/`endTime` by whoever opens it.
     - **Foreground only.** Location and voice stop when the screen is off or another app is in front. A
       foreground service with background location is the next step.
   - **Start this route today** (`route_starter.dart`): on the route view, a today booking and Home's next-up
     card, when `DriverSchedule.scheduledToday`. It writes `run_starts/{id}` and waits for the backend's
     `start-route-run` to answer with a run (today's sheet, or a copy of the last one), then opens the
-    driving screen. The driving screen notes a copied run's sheet date.
+    driving screen.
   - **Tap a stop** on any driver map or list for `showStopDetails` (`lib/widgets/stop_details_sheet.dart`):
     name, address, items, instructions, phone, and the delivery time and photo once delivered. The route
     view reads items and instructions from the route card.

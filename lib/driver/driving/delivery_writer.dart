@@ -49,6 +49,18 @@ class DeliveryWriter {
     await _run.update({'driver_ended_at': FieldValue.serverTimestamp()});
   }
 
+  /// "Leave" on the driving screen mid-run; notify-run tells the owners.
+  Future<void> left() async {
+    AppLog.auth('driving: left run', {'runId': runId});
+    await _run.update({'driver_left_at': FieldValue.serverTimestamp()});
+  }
+
+  /// Back on the driving screen after leaving; the owners hear that too.
+  Future<void> resumed() async {
+    AppLog.auth('driving: resumed run', {'runId': runId});
+    await _run.update({'driver_resumed_at': FieldValue.serverTimestamp()});
+  }
+
   Future<void> arrived(String stopId) async {
     AppLog.auth('driving: arrived', {'stopId': stopId});
     await _stop(stopId).update({'arrived_at': FieldValue.serverTimestamp()});

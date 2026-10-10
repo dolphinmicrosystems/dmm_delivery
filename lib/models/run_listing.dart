@@ -44,6 +44,8 @@ class RunListing {
     this.completedAt,
     this.driverStartedAt,
     this.driverEndedAt,
+    this.driverLeftAt,
+    this.driverResumedAt,
     this.nextStopName,
   });
 
@@ -68,6 +70,13 @@ class RunListing {
   /// When the driver tapped Start, and End; null until they do.
   final DateTime? driverStartedAt;
   final DateTime? driverEndedAt;
+
+  /// The driver's "Leave" on the driving screen mid-run, and reopening it.
+  final DateTime? driverLeftAt;
+  final DateTime? driverResumedAt;
+
+  /// Left the driving screen and not back yet.
+  bool get hasLeft => driverLeftAt != null && (driverResumedAt == null || driverResumedAt!.isBefore(driverLeftAt!));
 
   final String? nextStopName;
 
@@ -116,6 +125,8 @@ class RunListing {
       completedAt: _time(data['completed_at']),
       driverStartedAt: _time(data['driver_started_at']),
       driverEndedAt: _time(data['driver_ended_at']),
+      driverLeftAt: _time(data['driver_left_at']),
+      driverResumedAt: _time(data['driver_resumed_at']),
       nextStopName: next is Map ? next['customer_name'] as String? : null,
     );
   }

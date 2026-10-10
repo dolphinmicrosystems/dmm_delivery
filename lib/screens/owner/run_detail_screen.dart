@@ -8,12 +8,15 @@ import '../../models/road_legs.dart';
 import '../../models/run_listing.dart';
 import '../../models/run_stop.dart';
 import '../../models/run_time.dart';
+import '../../models/run_timing.dart';
 import '../../services/depot_locator.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/map_with_sheet.dart';
 import '../../widgets/route_preview_map.dart';
+import '../../widgets/run_timing_pill.dart';
 import '../../widgets/stop_instructions_sheet.dart';
+import 'owner_run_data.dart';
 import 'run_photos_screen.dart';
 
 /// One run, live: the route on the map with delivered stops ticked off, how
@@ -113,6 +116,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                   Widget row(int index) {
                           if (index == 0) {
                             return _Header(
+                              ownerUid: widget.authState.ownerUid ?? '',
                               listing: listing,
                               driver: widget.driver,
                               startTime: widget.startTime,
@@ -216,6 +220,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
 
 class _Header extends StatelessWidget {
   const _Header({
+    required this.ownerUid,
     required this.listing,
     required this.driver,
     required this.startTime,
@@ -224,6 +229,7 @@ class _Header extends StatelessWidget {
     this.onPhotos,
   });
 
+  final String ownerUid;
   final RunListing listing;
   final String? driver;
   final String? startTime;
@@ -276,7 +282,31 @@ class _Header extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(status.label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(status.label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+              // Against the schedule, with the driving screen's heartbeat:
+              // "12 min late", "No signal since 6:40 am".
+              RunLiveBuilder(
+                ownerUid: ownerUid,
+                runIds: [if (listing.started != null && listing.finished == null) listing.id],
+                builder: (context, lastSeen) {
+                  final timing = RunTiming.of(
+                    run: listing,
+                    startTime: startTime,
+                    endTime: endTime,
+                    lastSeen: lastSeen[listing.id],
+                    now: now,
+                  );
+                  return timing.kind == TimingKind.notStarted || timing.kind == TimingKind.unfinished
+                      ? const SizedBox.shrink()
+                      : RunTimingPill(timing);
+                },
+              ),
+            ],
+          ),
           const SizedBox(height: 4),
           for (final line in lines)
             Padding(
