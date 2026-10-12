@@ -40,8 +40,6 @@ class _OwnerShell extends StatefulWidget {
 }
 
 class _OwnerShellState extends State<_OwnerShell> {
-  static const _routesTab = 1;
-
   int _tabIndex = 0;
 
   void _selectTab(int index) {
@@ -67,7 +65,7 @@ class _OwnerShellState extends State<_OwnerShell> {
       body: IndexedStack(
         index: _tabIndex,
         children: [
-          OwnerHomeScreen(authState: widget.authState, onOpenRoutes: () => _selectTab(_routesTab)),
+          OwnerHomeScreen(authState: widget.authState, onOpenTab: (tab) => _selectTab(tab.index)),
           OwnerRoutesScreen(authState: widget.authState),
           RunsScreen(authState: widget.authState),
           OwnerDriversScreen(authState: widget.authState),

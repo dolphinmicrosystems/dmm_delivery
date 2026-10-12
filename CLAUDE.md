@@ -10,21 +10,20 @@ Firebase/GCP project. Two roles, decided server-side, not by a UI toggle:
 - **Owner** — uploads run-sheet PDFs, reviews/reorders the parsed route, watches a driver board. This is
   where essentially all real work has happened.
 - **Driver** (`lib/driver/`): sees their runs (Upcoming / Today / Past, each past run with its full history)
-  and their routes, switches Online / Offline, and drives a run: map following the van, voice, Arrived, photo,
+  and their routes, and drives a run: map following the van, voice, Arrived, photo,
   Delivered (`lib/driver/driving/`).
 
 The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + Terraform + Firestore
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
 name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
 `build_rider_board.py`) — those names are the contract. Its tests run with
-`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (411 tests). Several features span both repos —
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (414 tests). Several features span both repos —
 route naming and the stop-order merge below are the current examples — and a client change that writes a
 new Firestore field is inert until that repo's `firestore.rules` is deployed.
 
 `plan.md` is the working design record: completed screens, the **"What is real vs mock"** table, the Board
 API shape, and decisions marked "worth not re-litigating". Read it before changing Owner behaviour —
-several things that look like bugs (two presence states, no map panel on the board, "Scheduling not built
-yet") are deliberate and explained there.
+several things that look like bugs (two presence states, no map panel on the board) are deliberate and explained there.
 
 ## Commands
 
@@ -34,7 +33,7 @@ yet") are deliberate and explained there.
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (270 tests, all passing)
+- Run all tests: `flutter test` (277 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -92,8 +91,8 @@ with the ephemeral workspace.
 - `AuthStatus.needsRole` is a defensive dead-end, not an expected state.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
-`DriverShell` (`lib/driver/`, tabs Home/Runs/Routes, Online switch in the bar) and *everyone else,
-including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's "Update routes" switches to Routes). Owner screens are **bodies, not
+`DriverShell` (`lib/driver/`, tabs Home/Runs/Routes; online whenever the app is open) and *everyone else,
+including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's tiles switch tabs through `OwnerTab`). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
 
@@ -121,14 +120,17 @@ RunDetailScreen        → one delivery_run + its stops, streamed: map with deli
 OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
                          DriverAccessApi → driver-access function (remove / restore);
                          tap a row → DriverDetailScreen
-DriverDetailScreen     → driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
+DriverDetailScreen     → "Tell me when <name> opens the app" (user_settings/{uid}.presence_alert_drivers,
+                           this driver's uid; off unless turned on)
+                         + driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
                          + route_assignments/circuits: the Schedule section (regular routes, upcoming
                            runs, days a colleague covers) and "Schedule a run"; each row's ⋮ menu
                            changes times, removes the route from the driver, or cancels a booking
                            (RouteAssigner.removeDriver / cancelBooking - new rows, never edits)
                          + vehicles (VehicleService: assign / change / remove / add, one per driver)
 SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the account card → OwnerProfileScreen
-                         + user_settings/{uid}.driver_presence_alerts ("Driver online / offline")
+                         + user_settings/{uid}.driver_presence_alerts ("Drivers opening the app",
+                           every driver; off unless turned on)
                          + user_settings/{uid}.late_start_alerts ("Late and stopped runs", from run-alerts:
                            late starts, running late, and an app that stopped reporting)
                          + app_settings/{owner}.default_stop_seconds ("Time at each stop": what
@@ -168,11 +170,28 @@ are deleted.
     both together.
   - Shown as `RunTimingPill` on Home's Live now, the Runs tab cards, the run screen header, the driver's
     Home card and the driving screen.
-- **Home's "Live now"** (`live_runs_section.dart`): today's runs on the road, plus any that should have
-  started and haven't, problems first. Each shows the driver, the vehicle (`vehicles` by
-  `assigned_driver_uid`), progress, next stop and back-by time. Hidden when there is nothing to watch.
-  `OwnerRunDataBuilder` (`owner_run_data.dart`) loads the runs, routes, schedule, names and vehicles for it
-  and the Runs tab; `RunLiveBuilder` reads `run_live` for the runs under way (by id, at most 30).
+- **Owner Home** (`owner_home_screen.dart`), tiles throughout, every number from real data:
+  - a header card (date, greeting, one line on how the day is going);
+  - **Today** tiles: runs done, stops delivered, drivers online (`driver_presence`, online, intersected
+    with accepted driver invitations), and how many things need attention. Each opens its tab
+    (`OwnerTab`, passed up to `_OwnerShell`);
+  - **Needs attention:** no signal, left, late, late to start, and today's or tomorrow's runs with no
+    driver (tap to assign, via `scheduleRoute` on that day, "this day only");
+  - **Live now** (`LiveRunCard` in `live_run_card.dart`): driver, vehicle, progress, next stop, back-by;
+  - **Coming up:** today's runs still to start, then tomorrow's;
+  - **Quick actions** as tiles: Delivery roster, Schedule a run (`pickRouteAndSchedule`: route, then
+    the shared sheet), Upload run sheet, Invite drivers, Runs & history, Settings.
+  - The counting is pure and tested: `OwnerToday` (`lib/models/owner_today.dart`,
+    `test/owner_today_test.dart`).
+  - `OwnerRunDataBuilder` (`owner_run_data.dart`) loads the runs, routes, schedule, names and vehicles for
+    Home, the Runs tab and the roster; `RunLiveBuilder` reads `run_live` for the runs under way (by id,
+    at most 30).
+- **Delivery roster** (`owner_roster_screen.dart`): the next 7 days as day chips (a dot marks a day with a
+  route nobody drives), and every route that day with its driver and times. Built by `WeekRoster`
+  (`lib/models/week_roster.dart`, tested) from `route_assignments` through `RouteAssignment.activeAt` at
+  midday, the same rule as everywhere else. Tapping a route opens `showScheduleRunSheet` on that day,
+  preset to "this day only" (the sheet now takes `date` and `oneDay`). This replaces the disabled
+  "Delivery roster - Scheduling not built yet" card.
 - **The heartbeat** (`lib/driver/driving/run_heartbeat.dart`): while a started run's driving screen is
   open, it writes `run_live/{runId}` once a minute (server time, plus the van's position). Closing the
   app, a flat battery and no signal all show as silence. The van position isn't drawn on the owner's map
@@ -502,13 +521,20 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     `dmm-delivery-app/src/dmm_delivery/adapters/fcm_user_push.py` and the manifest's FCM defaults. Don't
     rename them on one side only.
   - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished),
-    `live_runs` (low importance, silent), `drivers` (owners: a driver went online or offline) and `status`
-    (a driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
-  - **Online / offline** (`lib/driver/driver_presence.dart`, the `OnlineSwitch` in the driver's app bar). It writes `driver_presence/{uid}` (`owner_uid`, `online`, `changed_at` = server time; the
-    rules allow only the driver themselves). It shows the driver an ongoing "You're online", replaced by
-    "You're offline". The backend's notify-presence tells the owners. Signing out sets a driver offline
-    first. Owners mute these alerts in Settings → Notifications, stored per person in
-    `user_settings/{uid}.driver_presence_alerts` (`SettingsStore`).
+    `live_runs` (low importance, silent), `drivers` (owners: a driver opened the app) and `status`
+    (no longer sent; was the driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
+  - **Online means the app is open; there is no switch** (`lib/driver/driver_presence.dart`).
+    `DriverPresenceTracker` wraps the driver shell and writes `driver_presence/{uid}` (`owner_uid`, `online`,
+    `changed_at` = server time; the rules allow only the driver themselves): online as the app opens or
+    comes back to the front, offline when it is left (hidden / paused / detached) and on sign-out.
+    - **Owners see it** on Home ("1 of 2 drivers online").
+    - **Owners are told only if they asked, and only on opening the app after 30+ minutes away**
+      (notify-presence); leaving is never sent. Both switches are off by default: Settings → "Drivers
+      opening the app" (`driver_presence_alerts`, every driver) and the driver's page → "Tell me when …
+      opens the app" (`presence_alert_drivers`, uids). Both live in `SettingsStore`.
+    - The old Online switch and the driver's own ongoing "You're online" are gone;
+      `PresenceNotification.clear()` removes one left in the shade by an earlier build.
+    - A phone that dies without leaving the app stays "online" until it is next opened and left.
   - **The live run notification** is sent as data, and the app draws it (`LiveRunNotification`). It is ongoing,
     shows a progress bar and a chronometer from the run's start, uses the run id as its tag (so each run
     updates in place), and times out 30 minutes after its last update so it can't get stuck. When the app

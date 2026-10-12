@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
 /// The header both shells share: the Blue Dot mark and name, plus whatever
-/// [actions] a shell adds (the driver's Online switch).
+/// any [actions] a screen adds.
 class BlueDotAppBar extends StatelessWidget implements PreferredSizeWidget {
   const BlueDotAppBar({super.key, this.actions});
 

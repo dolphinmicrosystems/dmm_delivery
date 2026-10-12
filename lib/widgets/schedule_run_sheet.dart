@@ -56,6 +56,8 @@ Future<ScheduleChoice?> showScheduleRunSheet(
   String? routeName,
   DriverInvitation? driver,
   RouteAssignment? current,
+  DateTime? date,
+  bool oneDay = false,
 }) {
   assert(roundKey != null || driver != null, 'Fix the route, the driver, or both');
   return showModalBottomSheet<ScheduleChoice>(
@@ -68,6 +70,8 @@ Future<ScheduleChoice?> showScheduleRunSheet(
       fixedRouteName: routeName,
       fixedDriver: driver,
       current: current,
+      initialDate: date,
+      initialOneDay: oneDay,
     ),
   );
 }
@@ -98,6 +102,8 @@ class _ScheduleRunSheet extends StatefulWidget {
     this.fixedRouteName,
     this.fixedDriver,
     this.current,
+    this.initialDate,
+    this.initialOneDay = false,
   });
 
   final AuthState authState;
@@ -106,19 +112,24 @@ class _ScheduleRunSheet extends StatefulWidget {
   final DriverInvitation? fixedDriver;
   final RouteAssignment? current;
 
+  /// The day to start on (the roster's chosen day), and whether it is that
+  /// day only; today and every day otherwise.
+  final DateTime? initialDate;
+  final bool initialOneDay;
+
   @override
   State<_ScheduleRunSheet> createState() => _ScheduleRunSheetState();
 }
 
 class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
-  late DateTime _date = _today();
+  late DateTime _date = _initialDate();
   late String? _startTime = widget.current?.startTime;
 
   /// What the owner chose for the finish; null until they do, while it
   /// follows the start plus the estimate ([_suggestedEnd]).
   late String? _endTime = widget.current?.endTime;
   Duration? _estimate;
-  bool _oneDay = false;
+  late bool _oneDay = widget.initialOneDay;
   String? _roundKey;
   String? _routeName;
   DriverInvitation? _driver;
@@ -145,6 +156,13 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
 
   /// The finish shown and saved: the owner's, else the suggestion.
   String? get _end => _startTime == null ? null : (_endTime ?? _suggestedEnd);
+
+  DateTime _initialDate() {
+    final today = _today(), day = widget.initialDate;
+    if (day == null) return today;
+    final date = DateTime(day.year, day.month, day.day);
+    return date.isBefore(today) ? today : date;
+  }
 
   static DateTime _today() {
     final now = DateTime.now();

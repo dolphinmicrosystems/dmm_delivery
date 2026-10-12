@@ -28,7 +28,7 @@ import 'notification_channels.dart';
 ///
 /// The rest of this folder: [NotificationChannels] (the kinds, and the Blue
 /// Dot look), [LiveRunNotification] (the owner's live run, sent as data) and
-/// PresenceNotification (the driver's own "You're online").
+/// PresenceNotification (clears the old "You're online" left by earlier builds).
 class PushNotifications {
   PushNotifications._();
 

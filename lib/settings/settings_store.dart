@@ -74,14 +74,28 @@ class SettingsStore {
 
   // --- This person's own ----------------------------------------------------
 
-  /// Whether this person hears "Ana is online" / "Ana is offline". Read by
-  /// the backend's notify-presence. Absent means on.
+  /// Whether this person hears "Ana is online" when any driver opens the
+  /// app. Read by the backend's notify-presence. Off unless turned on.
   Stream<bool> driverPresenceAlerts() =>
-      _personal.snapshots().map((snap) => snap.data()?['driver_presence_alerts'] != false);
+      _personal.snapshots().map((snap) => snap.data()?['driver_presence_alerts'] == true);
 
   Future<void> setDriverPresenceAlerts(bool on) async {
     AppLog.owner('setting driver presence alerts', {'on': on});
     await _personal.set({'driver_presence_alerts': on}, SetOptions(merge: true));
+  }
+
+  /// Whether this person hears when one particular driver opens the app -
+  /// the switch on that driver's page (`presence_alert_drivers`, their uids).
+  /// Off unless turned on; the Settings switch covers every driver at once.
+  Stream<bool> presenceAlertFor(String driverUid) => _personal.snapshots().map(
+    (snap) => (snap.data()?['presence_alert_drivers'] as List?)?.contains(driverUid) ?? false,
+  );
+
+  Future<void> setPresenceAlertFor(String driverUid, bool on) async {
+    AppLog.owner('setting presence alert for one driver', {'on': on});
+    await _personal.set({
+      'presence_alert_drivers': on ? FieldValue.arrayUnion([driverUid]) : FieldValue.arrayRemove([driverUid]),
+    }, SetOptions(merge: true));
   }
 
   /// Whether this owner hears "Sonia hasn't started Run 3" (run-alerts).

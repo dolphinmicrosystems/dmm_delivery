@@ -9,6 +9,8 @@ import '../../models/vehicle.dart';
 import '../../models/run_time.dart';
 import '../../services/route_assigner.dart';
 import '../../services/vehicle_service.dart';
+import '../../settings/cards/switch_setting_card.dart';
+import '../../settings/settings_store.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
@@ -58,6 +60,16 @@ class DriverDetailScreen extends StatelessWidget {
               ),
             )
           else ...[
+            // This owner's own choice (user_settings), off by default; the
+            // Settings switch covers every driver at once.
+            SwitchSettingCard(
+              title: 'Tell me when ${invitation.displayName} opens the app',
+              subtitle: 'A notification when they open Blue Dot after half an hour or more away.',
+              value: SettingsStore(authState).presenceAlertFor(uid),
+              onChanged: (on) => SettingsStore(authState).setPresenceAlertFor(uid, on),
+              what: 'driver presence alert',
+            ),
+            const SizedBox(height: 20),
             _Record(ownerUid: ownerUid, driverUid: uid),
             const SizedBox(height: 20),
             _Schedule(authState: authState, driver: invitation),

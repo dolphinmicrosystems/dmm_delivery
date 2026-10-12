@@ -16,8 +16,10 @@ class DriverAlertsCard extends StatelessWidget {
     return Column(
       children: [
         SwitchSettingCard(
-          title: 'Driver online / offline',
-          subtitle: 'A notification when one of your drivers switches online or offline.',
+          title: 'Drivers opening the app',
+          subtitle:
+              'A notification when any driver opens Blue Dot after half an hour or more away. '
+              "Off by default. For just one driver, use the switch on that driver's page.",
           value: settings.driverPresenceAlerts(),
           onChanged: settings.setDriverPresenceAlerts,
           what: 'presence alerts',

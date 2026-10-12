@@ -36,7 +36,7 @@ keeps its scroll position.
 
 | Action | State |
 | --- | --- |
-| Calendar · Delivery roster | Deferred — card disabled, reads "Coming soon" |
+| Calendar · Delivery roster | Real — `OwnerRosterScreen`: the next 7 days from `route_assignments` (`WeekRoster`), tap a route to schedule that day |
 | Invites · Invite riders | Live; counts pending and expired separately |
 | Run sheets · Update routes | Live → `OwnerRoutesScreen` → `UploadRunSheetScreen` |
 
@@ -69,9 +69,9 @@ keeps its scroll position.
   observable; "Picking up" and "Idle" were placeholder flavour. Anything not
   actively running a route reads as **Offline**, whose ETA renders as an em
   dash — "0 min" would read as "arriving now".
-- Nothing invents numbers the backend cannot supply. The roster card says
-  "Scheduling not built yet" rather than the prototype's "12 riders scheduled
-  this week". A made-up figure on a real screen is indistinguishable from a
+- Nothing invents numbers the backend cannot supply. The roster card used to
+  say "Scheduling not built yet" rather than the prototype's "12 riders
+  scheduled this week"; now it counts real route-days without a driver. A made-up figure on a real screen is indistinguishable from a
   broken one.
 
 ## What is real vs mock
@@ -195,8 +195,9 @@ match /rider_board/{riderUid} {
 }
 ```
 
-**Delivery roster / calendar** — the disabled home quick action. No schedule
-data exists yet.
+**Delivery roster / calendar** — built (Oct 2026) once scheduling existed:
+`OwnerRosterScreen`, read from `route_assignments`. Still nothing invented: a
+route with nobody scheduled says "No driver".
 
 ## Driver invitations — decided, worth not re-litigating
 

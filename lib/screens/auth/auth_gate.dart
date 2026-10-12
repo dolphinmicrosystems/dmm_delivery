@@ -13,10 +13,50 @@ import 'role_select_screen.dart';
 /// function should always grant owner or reject with an error - see
 /// dmm-delivery-app's application/handle_sign_in.py) rather than an
 /// expected steady state.
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key, required this.authState});
 
   final AuthState authState;
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  AuthState get authState => widget.authState;
+
+  /// Who was signed in at the last change, to spot the moment they leave.
+  String? _uid;
+
+  @override
+  void initState() {
+    super.initState();
+    _uid = authState.user?.uid;
+    authState.addListener(_onAuthChanged);
+  }
+
+  @override
+  void dispose() {
+    authState.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  /// Signing out (or being signed out) closes every screen opened over the
+  /// app. This gate swaps only the bottom of the stack, so without this a
+  /// Settings screen opened from the menu stayed on top of the sign-in
+  /// screen, showing nobody's account. Only on the way *out*: the sign-in
+  /// screen is itself pushed, and must stay while someone signs in.
+  void _onAuthChanged() {
+    final uid = authState.user?.uid;
+    final signedOut = _uid != null && uid == null;
+    _uid = uid;
+    if (!signedOut || !mounted) return;
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      AppLog.auth('signed out -> closing open screens');
+      navigator.popUntil((route) => route.isFirst);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

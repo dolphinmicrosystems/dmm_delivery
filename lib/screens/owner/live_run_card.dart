@@ -1,106 +1,36 @@
 import 'package:flutter/material.dart';
 
+import '../../models/owner_today.dart';
 import '../../models/run_listing.dart';
 import '../../models/run_time.dart';
 import '../../models/run_timing.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/run_timing_pill.dart';
-import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
-import 'owner_run_data.dart';
 import 'run_detail_screen.dart';
 
-/// Home's "Live now": every run on the road today - who is driving it, in
-/// which vehicle, how far along, the next stop and whether it is on time -
-/// and every run that should have started and hasn't. Problems first.
-///
-/// Nothing at all when there is nothing to watch, so a quiet afternoon shows
-/// the plain Home.
-class LiveRunsSection extends StatelessWidget {
-  const LiveRunsSection({super.key, required this.authState});
-
-  final AuthState authState;
-
-  @override
-  Widget build(BuildContext context) {
-    final ownerUid = authState.ownerUid;
-    if (ownerUid == null) return const SizedBox.shrink();
-    return OwnerRunDataBuilder(
-      authState: authState,
-      ownerUid: ownerUid,
-      loading: const SizedBox.shrink(),
-      builder: (context, data) {
-        final now = DateTime.now();
-        final today = data.runs.where((run) => run.phase(now) == RunPhase.today && run.finished == null);
-        return RunLiveBuilder(
-          ownerUid: ownerUid,
-          runIds: [
-            for (final run in today)
-              if (run.started != null) run.id,
-          ],
-          builder: (context, lastSeen) {
-            final rows =
-                [
-                      for (final run in today)
-                        if (data.crewFor(run) case final crew)
-                          (
-                            run: run,
-                            crew: crew,
-                            timing: RunTiming.of(
-                              run: run,
-                              startTime: crew.startTime,
-                              endTime: crew.endTime,
-                              lastSeen: lastSeen[run.id],
-                              now: now,
-                            ),
-                          ),
-                    ]
-                    .where((row) => row.run.started != null || row.timing.kind == TimingKind.lateStart)
-                    .toList()
-                  ..sort((a, b) {
-                    final problem = (b.timing.isProblem ? 1 : 0) - (a.timing.isProblem ? 1 : 0);
-                    return problem != 0 ? problem : (a.run.routeName ?? '').compareTo(b.run.routeName ?? '');
-                  });
-            if (rows.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SectionLabel('Live now'),
-                const SizedBox(height: 12),
-                for (final row in rows) ...[
-                  _LiveRunCard(
-                    run: row.run,
-                    driver: row.crew.driver,
-                    vehicle: row.crew.vehicle?.description,
-                    timing: row.timing,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => RunDetailScreen(
-                          authState: authState,
-                          runId: row.run.id,
-                          routeName: row.run.routeName ?? 'Run',
-                          driver: row.crew.driver,
-                          startTime: row.crew.startTime,
-                          endTime: row.crew.endTime,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                const SizedBox(height: 8),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+/// Opens the owner's view of a run.
+void openRunDetail(BuildContext context, AuthState authState, TodayRun row) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => RunDetailScreen(
+        authState: authState,
+        runId: row.run.id,
+        routeName: row.run.routeName ?? 'Run',
+        driver: row.crew.driver,
+        startTime: row.crew.startTime,
+        endTime: row.crew.endTime,
+      ),
+    ),
+  );
 }
 
-class _LiveRunCard extends StatelessWidget {
-  const _LiveRunCard({
+/// One run on the road, on Home's "Live now": who is driving it, in which
+/// vehicle, how far along, the next stop and whether it is on time.
+class LiveRunCard extends StatelessWidget {
+  const LiveRunCard({
+    super.key,
     required this.run,
     required this.driver,
     required this.vehicle,
