@@ -179,4 +179,41 @@ void main() {
     expect(cards[RunPhase.today]!.single.day, DateTime(2026, 10, 5));
     expect([for (final c in cards[RunPhase.upcoming]!) c.day!.day], [6, 10, 11, 12, 13, 17, 18]);
   });
+
+  group('the Home greeting', () {
+    final rows = [row('south', 'ana', longAgo, start: '05:00', end: '10:00')];
+
+    test('a run under way, on time or late', () {
+      RunListing driving(int delivered) => RunListing.fromMap('a', {
+        'round_key': 'south',
+        'delivery_date': '05/10/2026',
+        'stop_count': 60,
+        'delivered_count': delivered,
+        'estimated_total_s': 7200,
+        'started_at': DateTime(2026, 10, 5, 5),
+      });
+      final onTime = DriverSchedule.greeting(DriverSchedule.home(build([driving(50)], rows), now), now);
+      expect((onTime.text, onTime.tone), ('South Runsheet is live · 50 of 60 delivered', GreetingTone.good));
+      // 50 of 60 at 9 am: back ~9:20, on time. 10 of 60: back ~10:40 against 10:00.
+      final late = DriverSchedule.greeting(DriverSchedule.home(build([driving(10)], rows), now), now);
+      expect(late.tone, GreetingTone.warn);
+      expect(late.text, startsWith('South Runsheet · '));
+    });
+
+    test('due and not started, coming up later today, tomorrow, or nothing at all', () {
+      final due = DriverSchedule.greeting(DriverSchedule.home(build([run('south', '05/10/2026')], rows), now), now);
+      expect((due.text, due.tone), ('South Runsheet was due at 5:00 am', GreetingTone.warn));
+
+      final evening = [row('south', 'ana', longAgo, start: '17:00')];
+      final later = DriverSchedule.greeting(DriverSchedule.home(build([], evening), now), now);
+      expect((later.text, later.tone), ('South Runsheet today at 5:00 pm', GreetingTone.good));
+
+      final tomorrowOnly = [row('south', 'ana', DateTime(2026, 10, 6), start: '05:00')];
+      final next = DriverSchedule.greeting(DriverSchedule.home(build([], tomorrowOnly), now), now);
+      expect((next.text, next.tone), ('Next: South Runsheet · Tomorrow 5:00 am', GreetingTone.quiet));
+
+      final none = DriverSchedule.greeting(DriverSchedule.home(build([], const []), now), now);
+      expect(none.text, 'Nothing scheduled - enjoy the day');
+    });
+  });
 }

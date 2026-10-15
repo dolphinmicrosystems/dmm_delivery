@@ -1,5 +1,8 @@
 import '../models/route_assignment.dart';
+import '../models/driver_stats.dart';
 import '../models/run_listing.dart';
+import '../models/run_time.dart';
+import '../models/run_timing.dart';
 import '../models/schedule_plan.dart';
 
 /// One card on the driver's Runs tabs: either a run (a confirmed run sheet,
@@ -163,6 +166,51 @@ class DriverSchedule {
     return (live: live, next: waiting.firstOrNull, later: waiting.skip(1).take(3).toList());
   }
 
+  /// The line under "Kia ora, Sonia" on the driver's Home, and whether it is
+  /// good news, something to act on, or neither:
+  ///
+  ///   "Run 3 is live · 23 of 60 delivered"        good
+  ///   "Run 3 · 12 min late"                       warn
+  ///   "Run 3 was due at 5:00 am"                  warn  (not started, 10 min past)
+  ///   "Run 3 today at 5:00 am"                    good
+  ///   "Next: Run 3 · Tomorrow 5:00 am"            quiet
+  ///   "Nothing scheduled - enjoy the day"         quiet
+  static ({String text, GreetingTone tone}) greeting(
+    ({DriverRunCard? live, DriverRunCard? next, List<DriverRunCard> later}) home,
+    DateTime now,
+  ) {
+    if (home.live case final live?) {
+      final run = live.run!;
+      final timing = RunTiming.of(
+        run: run,
+        startTime: live.start,
+        endTime: live.end,
+        lastSeen: now,
+        now: now,
+      );
+      if (timing.kind == TimingKind.late) {
+        return (text: '${live.routeName} · ${timing.label}', tone: GreetingTone.warn);
+      }
+      return (
+        text: '${live.routeName} is live · ${run.deliveredCount} of ${run.stopCount} delivered',
+        tone: GreetingTone.good,
+      );
+    }
+    final next = home.next;
+    if (next == null) return (text: 'Nothing scheduled - enjoy the day', tone: GreetingTone.quiet);
+    final at = next.start == null ? null : formatStartTime(next.start!);
+    final day = relativeDayLabel(next.day, now);
+    if (day == 'Today') {
+      final start = parseStartTime(next.start);
+      final due = start == null ? null : DateTime(now.year, now.month, now.day, start.hour, start.minute);
+      if (due != null && now.isAfter(due.add(RunTiming.lateStartAfter))) {
+        return (text: '${next.routeName} was due at $at', tone: GreetingTone.warn);
+      }
+      return (text: '${next.routeName} today${at == null ? '' : ' at $at'}', tone: GreetingTone.good);
+    }
+    return (text: 'Next: ${next.routeName} · $day${at == null ? '' : ' $at'}', tone: GreetingTone.quiet);
+  }
+
   /// Whether [driverUid] is the one scheduled on [roundKey] today - who may
   /// "Start this route today" (the backend checks the same).
   static bool scheduledToday(
@@ -217,3 +265,7 @@ class DriverRoute {
   final String? endTime;
   final DateTime? from;
 }
+
+/// How the driver's Home greeting line reads: good news, something to act
+/// on, or neither.
+enum GreetingTone { good, warn, quiet }

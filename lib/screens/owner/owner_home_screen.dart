@@ -11,6 +11,7 @@ import '../../settings/settings_screen.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../widgets/greeting_header.dart';
 import '../../widgets/run_timing_pill.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/surface_card.dart';
@@ -326,97 +327,27 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // First name only: a greeting that reads out a full name or an email
-    // address stops sounding like one.
-    final name = authState.user?.displayName?.split(' ').first;
-    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June', //
-      'July', 'August', 'September', 'October', 'November', 'December',
-    ];
     final (summary, tone) = _summary();
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.brand, AppColors.brandDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.brand.withValues(alpha: 0.28),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${weekdays[now.weekday - 1]} ${now.day} ${months[now.month - 1]}'.toUpperCase(),
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.1,
-              color: Colors.white70,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            name == null ? 'Kia ora' : 'Kia ora, $name',
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              height: 1.15,
-              letterSpacing: -0.5,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    summary,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+    return GreetingHeader(
+      name: GreetingHeader.firstName(authState.user?.displayName),
+      summary: summary,
+      tone: tone,
+      now: now,
     );
   }
 
   (String, Color) _summary() {
     final attention = today.attention.length;
     if (attention > 0) {
-      return ('$attention ${attention == 1 ? 'thing needs' : 'things need'} you', const Color(0xFFFFB4B4));
+      return ('$attention ${attention == 1 ? 'thing needs' : 'things need'} you', GreetingHeader.warn);
     }
     if (today.live.isNotEmpty) {
       final n = today.live.length;
-      return ('$n ${n == 1 ? 'run' : 'runs'} on the road, all on time', const Color(0xFF86EFAC));
+      return ('$n ${n == 1 ? 'run' : 'runs'} on the road, all on time', GreetingHeader.good);
     }
     if (today.runsToday == 0) return ('No runs today', Colors.white70);
     if (today.finishedToday == today.runsToday) {
-      return ("All of today's runs are done", const Color(0xFF86EFAC));
+      return ("All of today's runs are done", GreetingHeader.good);
     }
     final left = today.runsToday - today.finishedToday;
     return ('$left ${left == 1 ? 'run' : 'runs'} still to go today', Colors.white70);

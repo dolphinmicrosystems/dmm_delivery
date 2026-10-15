@@ -33,7 +33,7 @@ several things that look like bugs (two presence states, no map panel on the boa
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (292 tests, all passing)
+- Run all tests: `flutter test` (294 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -406,6 +406,9 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     - **Bookings** (a day they cover, or a route they take over later) show until that day's run sheet
       exists.
     - Start times come from the schedule for the run's own day, as on the owner's Runs tab.
+  - **Home greeting:** the same blue card as the owner's Home (`GreetingHeader`, `lib/widgets/greeting_header.dart`):
+    the date, "Kia ora, <first name>", and one line from `DriverSchedule.greeting` (tested): the live run's
+    progress, "12 min late", "was due at 5:00 am", "today at 5:00 am", "Next: … · Tomorrow", or a quiet day.
   - **Home** (`DriverHomeScreen`): the run **live now** (started, not finished), else **next up**, with a
     countdown on the day; then the next few. Chosen by `DriverSchedule.home`, which is tested.
   - **Every card opens** (`openDriverCard`). A run opens `DriverRunScreen`. A booking, or a route on the

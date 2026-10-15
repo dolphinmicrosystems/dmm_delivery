@@ -6,6 +6,7 @@ import '../models/run_time.dart';
 import '../models/run_timing.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
+import '../widgets/greeting_header.dart';
 import '../widgets/run_timing_pill.dart';
 import '../widgets/section_label.dart';
 import '../widgets/surface_card.dart';
@@ -14,8 +15,10 @@ import 'driver_navigation.dart';
 import 'driver_schedule.dart';
 import 'route_starter.dart';
 
-/// The driver's Home tab: the run that is live now, big - or, with none under
-/// way, the next one to drive and when it starts - then what follows.
+/// The driver's Home tab: "Kia ora, Sonia" and a line on their day
+/// (GreetingHeader, the same card as the owner's), then the run that is live
+/// now, big - or, with none under way, the next one to drive and when it
+/// starts - then what follows.
 ///
 /// "Live" is a run started (Start tapped, or a stop delivered) and not yet
 /// finished; it updates as stops are delivered, from the progress the backend
@@ -58,9 +61,21 @@ class DriverHomeScreen extends StatelessWidget {
       }
     }
 
+    final greeting = DriverSchedule.greeting(home, now);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
+        GreetingHeader(
+          name: GreetingHeader.firstName(authState.user?.displayName),
+          summary: greeting.text,
+          tone: switch (greeting.tone) {
+            GreetingTone.good => GreetingHeader.good,
+            GreetingTone.warn => GreetingHeader.warn,
+            GreetingTone.quiet => GreetingHeader.quiet,
+          },
+          now: now,
+        ),
+        const SizedBox(height: 22),
         if (home.live case final live?) ...[
           const SectionLabel('Live now'),
           const SizedBox(height: 8),
