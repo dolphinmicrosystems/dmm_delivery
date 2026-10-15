@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/delivery_estimate.dart';
@@ -21,6 +22,8 @@ class ScheduleChoice {
     this.driver,
     this.startTime,
     this.endTime,
+    this.weekdays,
+    this.otherDaysOff,
   });
 
   final String roundKey;
@@ -39,6 +42,14 @@ class ScheduleChoice {
   final String? endTime;
 
   final bool oneDay;
+
+  /// The days of the week it repeats on, 1 (Mon) - 7 (Sun); null for every
+  /// day. Ignored for [oneDay].
+  final List<int>? weekdays;
+
+  /// The other days, when the owner said the route doesn't run on them:
+  /// saved as a second, "not running" row (RouteAssigner.saveChoice).
+  final List<int>? otherDaysOff;
 }
 
 /// Schedules a run: who drives which route, from (or only on) which day, and
@@ -130,6 +141,28 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
   late String? _endTime = widget.current?.endTime;
   Duration? _estimate;
   late bool _oneDay = widget.initialOneDay;
+
+  /// The days of the week it repeats on (1 Mon - 7 Sun): the current row's,
+  /// else every day.
+  late Set<int> _days = {...(widget.current?.weekdays ?? const [1, 2, 3, 4, 5, 6, 7])};
+
+  /// With some days picked: the route doesn't run on the rest (rather than
+  /// those days keeping whoever drives them now).
+  bool _otherDaysOff = true;
+
+  bool get _everyDay => _days.length == 7;
+  List<int> get _otherDays => [for (var d = 1; d <= 7; d++) if (!_days.contains(d)) d];
+
+  /// The first day this actually applies: the chosen day, moved on to the
+  /// first picked weekday for a repeating schedule.
+  DateTime get _firstRunDay {
+    if (_oneDay || _everyDay) return _date;
+    for (var ahead = 0; ahead < 7; ahead++) {
+      final day = DateTime(_date.year, _date.month, _date.day + ahead);
+      if (_days.contains(day.weekday)) return day;
+    }
+    return _date;
+  }
   String? _roundKey;
   String? _routeName;
   DriverInvitation? _driver;
@@ -159,10 +192,20 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
 
   DateTime _initialDate() {
     final today = _today(), day = widget.initialDate;
-    if (day == null) return today;
+    if (day == null) {
+      // The route's usual start already gone today (opened in the
+      // afternoon for a morning run): start from tomorrow instead.
+      return startHasPassed(today, widget.current?.startTime, DateTime.now())
+          ? today.add(const Duration(days: 1))
+          : today;
+    }
     final date = DateTime(day.year, day.month, day.day);
     return date.isBefore(today) ? today : date;
   }
+
+  /// The chosen day is today and its start time has already gone by: a run
+  /// nobody can drive, which the backend would also count late at once.
+  bool get _startPassed => startHasPassed(_firstRunDay, _startTime, DateTime.now());
 
   static DateTime _today() {
     final now = DateTime.now();
@@ -218,7 +261,7 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
 
   bool get _fixedRoute => widget.fixedRoundKey != null;
   bool get _fixedDriver => widget.fixedDriver != null;
-  bool get _ready => _roundKey != null && _driver != null;
+  bool get _ready => _roundKey != null && _driver != null && !_startPassed;
 
   void _submit({bool remove = false}) {
     Navigator.pop(
@@ -230,6 +273,8 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
         startTime: _startTime,
         endTime: _end,
         oneDay: _oneDay,
+        weekdays: _oneDay || _everyDay ? null : ([..._days]..sort()),
+        otherDaysOff: !remove && !_oneDay && !_everyDay && _otherDaysOff ? _otherDays : null,
       ),
     );
   }
@@ -291,16 +336,56 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
                 ),
               ],
             ),
+            if (_startPassed)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _PastStartWarning(
+                  startTime: formatStartTime(_startTime!),
+                  onTomorrow: () => setState(() => _date = _today().add(const Duration(days: 1))),
+                  onLaterTime: _pickTime,
+                ),
+              ),
             const SizedBox(height: 8),
             SegmentedButton<bool>(
               segments: const [
-                ButtonSegment(value: false, label: Text('Every day from then')),
+                ButtonSegment(value: false, label: Text('Repeats')),
                 ButtonSegment(value: true, label: Text('This day only')),
               ],
               selected: {_oneDay},
               showSelectedIcon: false,
               onSelectionChanged: (value) => setState(() => _oneDay = value.first),
             ),
+            if (!_oneDay) ...[
+              const SizedBox(height: 10),
+              _WeekdayPicker(
+                selected: _days,
+                onChanged: (days) => setState(() => _days = days),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _everyDay
+                    ? 'Every day from ${_dayName(_date)}'
+                    : '${weekdaysLabel(_days)} from ${_dayName(_firstRunDay)}',
+                style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
+              ),
+              if (!_everyDay)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: _otherDaysOff,
+                  onChanged: (on) => setState(() => _otherDaysOff = on),
+                  title: Text(
+                    "No run on ${weekdaysLabel(_otherDays.toSet())}",
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: Text(
+                    _otherDaysOff
+                        ? "The route doesn't run on those days."
+                        : 'Those days keep whoever drives them now.',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
             const SizedBox(height: 14),
             SectionLabel(_fixedDriver ? 'Route' : 'Driver'),
             const SizedBox(height: 4),
@@ -331,7 +416,11 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
             ],
             const SizedBox(height: 12),
             PrimaryButton(
-              label: _ready ? 'Schedule' : (_fixedDriver ? 'Choose a route' : 'Choose a driver'),
+              label: _ready
+                  ? 'Schedule'
+                  : _startPassed
+                  ? 'Pick a time that is still ahead'
+                  : (_fixedDriver ? 'Choose a route' : 'Choose a driver'),
               icon: Icons.check_rounded,
               onPressed: _ready ? _submit : null,
             ),
@@ -350,6 +439,126 @@ class _ScheduleRunSheetState extends State<_ScheduleRunSheet> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// "Fri 16 Oct".
+String _dayName(DateTime day) {
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return '${weekdays[day.weekday - 1]} ${formatShortDate(day, thisYear: DateTime.now().year)}';
+}
+
+/// M T W T F S S, each a toggle; at least one stays on. Quick picks for
+/// weekdays, weekends and every day underneath.
+class _WeekdayPicker extends StatelessWidget {
+  const _WeekdayPicker({required this.selected, required this.onChanged});
+
+  final Set<int> selected;
+  final ValueChanged<Set<int>> onChanged;
+
+  static const _letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+  void _toggle(int day) {
+    final next = {...selected};
+    if (!next.remove(day)) next.add(day);
+    if (next.isNotEmpty) onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget quick(String label, Set<int> days) => ActionChip(
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+      backgroundColor: setEquals(selected, days) ? AppColors.brandSoft : null,
+      onPressed: () => onChanged(days),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            for (var day = 1; day <= 7; day++)
+              Semantics(
+                button: true,
+                selected: selected.contains(day),
+                label: weekdaysLabel({day}),
+                child: InkWell(
+                  onTap: () => _toggle(day),
+                  customBorder: const CircleBorder(),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: selected.contains(day) ? AppColors.brand : AppColors.surfaceMuted,
+                    ),
+                    child: Text(
+                      _letters[day - 1],
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: selected.contains(day) ? Colors.white : AppColors.inkMuted,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          children: [
+            quick('Every day', {1, 2, 3, 4, 5, 6, 7}),
+            quick('Weekdays', {1, 2, 3, 4, 5}),
+            quick('Weekends', {6, 7}),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// "5:00 am today has already passed", with the two ways out: tomorrow, or
+/// a later time today.
+class _PastStartWarning extends StatelessWidget {
+  const _PastStartWarning({required this.startTime, required this.onTomorrow, required this.onLaterTime});
+
+  final String startTime;
+  final VoidCallback onTomorrow;
+  final VoidCallback onLaterTime;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
+      decoration: BoxDecoration(color: const Color(0x14D64545), borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.schedule_rounded, size: 18, color: AppColors.danger),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$startTime today has already passed.',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.danger),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              TextButton(onPressed: onTomorrow, child: const Text('Start tomorrow instead')),
+              TextButton(onPressed: onLaterTime, child: const Text('Pick a later time')),
+            ],
+          ),
+        ],
       ),
     );
   }

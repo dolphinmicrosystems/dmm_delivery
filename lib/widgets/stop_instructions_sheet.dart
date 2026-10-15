@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../services/depot_locator.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
+import '../util/app_log.dart';
 import 'pill_badge.dart';
 import 'primary_button.dart';
 
@@ -58,6 +59,21 @@ class _StopInstructionsSheetState extends State<StopInstructionsSheet> {
           'owner_instructions_updated_at': FieldValue.serverTimestamp(),
           'owner_instructions_updated_by': widget.authState.user!.uid,
         }, SetOptions(merge: true));
+    // And on this run's stop itself, so the driver sees it now rather than
+    // from the next run sheet - which also tells them (the backend's
+    // notify-stop-change: "New instructions: Otago Glass"). The rules let
+    // the owner change exactly these two fields on a stop.
+    final text = _controller.text.trim();
+    if (text != ((_stop['instructions'] as String?)?.trim() ?? '')) {
+      try {
+        await widget.stopDoc.reference.update({
+          'instructions': text.isEmpty ? null : text,
+          'instructions_source': 'owner',
+        });
+      } on FirebaseException catch (error, stack) {
+        AppLog.owner.error('stop instructions update failed', error, stack);
+      }
+    }
     if (mounted) Navigator.of(context).pop();
   }
 

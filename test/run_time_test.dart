@@ -63,4 +63,14 @@ void main() {
       expect(windowLength('05:00', null), isNull);
     });
   });
+
+  test('a start already gone by today has passed; tomorrow, a later time or no time has not', () {
+    final now = DateTime(2026, 10, 15, 16, 27);
+    final today = DateTime(2026, 10, 15);
+    expect(startHasPassed(today, '05:00', now), isTrue);
+    expect(startHasPassed(today, '16:27', now), isTrue, reason: 'starting this very minute is too late');
+    expect(startHasPassed(today, '17:00', now), isFalse);
+    expect(startHasPassed(today.add(const Duration(days: 1)), '05:00', now), isFalse);
+    expect(startHasPassed(today, null, now), isFalse);
+  });
 }

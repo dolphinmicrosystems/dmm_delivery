@@ -77,4 +77,31 @@ void main() {
       ['Ana', 'Ana', 'Ana', 'Ben', 'Ben', 'Ben', 'Ben'],
     );
   });
+
+  test("a day the route doesn't run is not running, and not counted as needing a driver", () {
+    final roster = WeekRoster.build(
+      routeNames: {'run3': 'Run 3'},
+      assignmentsByRoute: RouteAssignment.byRoute([
+        RouteAssignment(
+          roundKey: 'run3',
+          effectiveFrom: DateTime(2026, 9, 1),
+          driverUid: 'ana',
+          weekdays: const [1, 2, 6, 7],
+        ),
+        RouteAssignment(
+          roundKey: 'run3',
+          effectiveFrom: DateTime(2026, 9, 1),
+          weekdays: const [3, 4, 5],
+          off: true,
+        ),
+      ]),
+      from: monday,
+    );
+    // Mon 12 .. Sun 18: Wed, Thu, Fri off.
+    expect(
+      [for (final day in roster.days) day.slots.single.off],
+      [false, false, true, true, true, false, false],
+    );
+    expect(roster.unassigned, 0);
+  });
 }

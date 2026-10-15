@@ -43,7 +43,11 @@ void main() {
       run('south', '02/10/2026', completed: DateTime(2026, 10, 2, 7)),
     ], rows);
 
-    expect(cards[RunPhase.upcoming]!.single.day, DateTime(2026, 10, 6));
+    // Tomorrow's sheet is the run; every scheduled day after it, a booking.
+    final upcoming = cards[RunPhase.upcoming]!;
+    expect((upcoming.first.day, upcoming.first.run != null), (DateTime(2026, 10, 6), true));
+    expect([for (final c in upcoming.skip(1)) c.day!.day], [for (var d = 7; d <= 18; d++) d]);
+    expect(upcoming.skip(1).every((c) => c.booking != null && c.start == '05:00'), isTrue);
     expect(cards[RunPhase.today]!.single.start, '05:00');
     expect(cards[RunPhase.past]!.single.run!.finished, DateTime(2026, 10, 2, 7));
   });
@@ -67,9 +71,11 @@ void main() {
   test('a route they take over from a later date is upcoming', () {
     final rows = [row('south', 'ben', longAgo), row('south', 'ana', DateTime(2026, 10, 12), start: '05:15')];
 
-    final card = build([], rows)[RunPhase.upcoming]!.single;
-    expect(card.day, DateTime(2026, 10, 12));
-    expect(card.start, '05:15');
+    final upcoming = build([], rows)[RunPhase.upcoming]!;
+    expect(upcoming.first.day, DateTime(2026, 10, 12));
+    expect(upcoming.first.start, '05:15');
+    // ...and every day after it, theirs.
+    expect([for (final c in upcoming) c.day!.day], [12, 13, 14, 15, 16, 17, 18]);
   });
 
   test('runs of deleted routes are left out', () {
@@ -125,21 +131,24 @@ void main() {
 
       expect(home.live?.run?.id, 'a');
       expect(home.next?.routeName, 'Run 3');
-      expect([for (final card in home.later) card.day], [DateTime(2026, 10, 6)]);
+      expect(home.later.first.day, DateTime(2026, 10, 6));
     });
 
     test('with nothing under way, the next run up leads', () {
       final home = DriverSchedule.home(build([run('south', '06/10/2026')], rows), now);
 
+      // Today is scheduled (both routes) though no sheet is uploaded yet:
+      // today's earliest leads, ahead of tomorrow's run.
       expect(home.live, isNull);
-      expect(home.next?.day, DateTime(2026, 10, 6));
+      expect((home.next?.day, home.next?.routeName), (DateTime(2026, 10, 5), 'South Runsheet'));
     });
 
     test('a finished run is neither live nor next', () {
       final done = run('south', '05/10/2026', completed: DateTime(2026, 10, 5, 7));
       final home = DriverSchedule.home(build([done], rows), now);
 
-      expect((home.live, home.next), (null, null));
+      // Done; what is next is today's other scheduled route.
+      expect((home.live, home.next?.routeName), (null, 'Run 3'));
     });
   });
 
@@ -153,5 +162,21 @@ void main() {
     expect(DriverSchedule.scheduledToday('ana', rows, 'south', now), isTrue);
     expect(DriverSchedule.scheduledToday('ana', rows, 'run3', now), isTrue);
     expect(DriverSchedule.scheduledToday('ben', rows, 'run3', now), isFalse);
+  });
+
+  test('a route on some days of the week shows on those days only', () {
+    final rows = [
+      RouteAssignment(
+        roundKey: 'run3',
+        effectiveFrom: longAgo,
+        driverUid: 'ana',
+        weekdays: const [1, 2, 6, 7],
+      ),
+      RouteAssignment(roundKey: 'run3', effectiveFrom: longAgo, weekdays: const [3, 4, 5], off: true),
+    ];
+    final cards = build([], rows);
+    // Mon 5 Oct is today; then Tue 6, Sat 10, Sun 11, Mon 12, Tue 13, Sat 17, Sun 18.
+    expect(cards[RunPhase.today]!.single.day, DateTime(2026, 10, 5));
+    expect([for (final c in cards[RunPhase.upcoming]!) c.day!.day], [6, 10, 11, 12, 13, 17, 18]);
   });
 }

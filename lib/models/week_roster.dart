@@ -10,6 +10,7 @@ class RosterSlot {
     this.startTime,
     this.endTime,
     this.cover = false,
+    this.off = false,
   });
 
   final String roundKey;
@@ -22,7 +23,13 @@ class RosterSlot {
   /// A one-day row: someone covering, or a day booked on its own.
   final bool cover;
 
+  /// The route doesn't run that day (a "not running" weekday row).
+  final bool off;
+
   bool get hasDriver => driverUid != null;
+
+  /// Nobody is driving a day the route does run.
+  bool get needsDriver => !hasDriver && !off;
 }
 
 class RosterDay {
@@ -33,7 +40,7 @@ class RosterDay {
   /// Every route, by start time then name.
   final List<RosterSlot> slots;
 
-  int get unassigned => slots.where((s) => !s.hasDriver).length;
+  int get unassigned => slots.where((s) => s.needsDriver).length;
 }
 
 /// The delivery roster: every route on each of the next [days] days, with
@@ -81,6 +88,7 @@ class WeekRoster {
                     startTime: active?.startTime,
                     endTime: active?.endTime,
                     cover: active?.oneDay ?? false,
+                    off: active?.off ?? false,
                   ),
             ]..sort(_byStart),
           ),

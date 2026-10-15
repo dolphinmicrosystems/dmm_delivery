@@ -34,15 +34,7 @@ Future<void> scheduleRoute(
   );
   if (choice == null) return;
   try {
-    await RouteAssigner.assign(
-      ownerUid: ownerUid,
-      roundKey: choice.roundKey,
-      effectiveFrom: choice.date,
-      driver: choice.driver,
-      startTime: choice.startTime,
-      endTime: choice.endTime,
-      oneDay: choice.oneDay,
-    );
+    await RouteAssigner.saveChoice(ownerUid: ownerUid, choice: choice);
   } on FirebaseException catch (error, stack) {
     AppLog.owner.error('schedule route failed', error, stack, {'roundKey': roundKey});
     messenger.showSnackBar(SnackBar(content: Text(RouteAssigner.errorMessage(error))));

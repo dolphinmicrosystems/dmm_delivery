@@ -1,5 +1,6 @@
 import '../models/route_assignment.dart';
 import '../models/run_listing.dart';
+import '../models/schedule_plan.dart';
 
 /// One card on the driver's Runs tabs: either a run (a confirmed run sheet,
 /// given to this driver), or a *booking* - a day the schedule puts them on a
@@ -11,12 +12,17 @@ class DriverRunCard {
     required this.day,
     this.startTime,
     this.endTime,
-  }) : booking = null;
+  }) : booking = null,
+       covering = false;
 
-  const DriverRunCard.booking(RouteAssignment this.booking, {required this.routeName, required this.day})
-    : run = null,
-      startTime = null,
-      endTime = null;
+  const DriverRunCard.booking(
+    RouteAssignment this.booking, {
+    required this.routeName,
+    required this.day,
+    this.covering = false,
+  }) : run = null,
+       startTime = null,
+       endTime = null;
 
   final RunListing? run;
   final RouteAssignment? booking;
@@ -27,6 +33,9 @@ class DriverRunCard {
 
   final String? startTime;
   final String? endTime;
+
+  /// A booking for a day someone else would otherwise drive (a one-day row).
+  final bool covering;
 
   /// When to start ("HH:MM"): the schedule's for a run's day; a booking
   /// carries its own.
@@ -41,10 +50,12 @@ class DriverRunCard {
 ///
 ///  * **Runs** are the ones the backend has given this driver (`rider_id`),
 ///    in the tab their date and progress put them in (RunListing.phase).
-///  * **Bookings** come from the schedule (RouteAssignment.routesFor): a
-///    route they take over from a later date, or a day they cover. They show
-///    until the run sheet for that day exists, which then replaces them -
-///    so a driver sees "Covering Run 3 on Thu" before the owner uploads it.
+///  * **Bookings** come from the schedule: every day of the next two weeks
+///    it gives them a route (SchedulePlan) - every day, some days of the
+///    week, or a day they cover - and, further out, a route they take over
+///    from a later date. They show until the run sheet for that day exists,
+///    which then replaces them - so a driver sees "Run 3 · Tomorrow 5:00 am"
+///    before the owner uploads it.
 ///
 /// Start times come from the schedule for the run's own day, as on the
 /// owner's Runs tab.
@@ -67,7 +78,7 @@ class DriverSchedule {
       final name = routeNames[run.roundKey];
       if (name == null) continue; // a deleted route: nobody will drive it
       final day = run.date;
-      if (day != null) runDays.add('${run.roundKey}|${_day(day)}');
+      if (day != null) runDays.add(SchedulePlan.key(run.roundKey, _day(day)));
       final scheduled = RouteAssignment.activeAt(
         byRoute[run.roundKey] ?? const [],
         DateTime((day ?? now).year, (day ?? now).month, (day ?? now).day, 12),
@@ -83,13 +94,42 @@ class DriverSchedule {
       );
     }
 
+    // Every scheduled day of theirs in the next two weeks without a sheet yet.
+    final planned = SchedulePlan.days(
+      routeNames: routeNames,
+      assignmentsByRoute: byRoute,
+      hasSheet: runDays,
+      from: today,
+    );
+    for (final day in planned) {
+      if (day.driverUid != driverUid) continue;
+      cards[day.day == today ? RunPhase.today : RunPhase.upcoming]!.add(
+        DriverRunCard.booking(
+          RouteAssignment(
+            roundKey: day.roundKey,
+            effectiveFrom: day.day,
+            driverUid: day.driverUid,
+            driverName: day.driverName,
+            startTime: day.startTime,
+            endTime: day.endTime,
+            oneDay: true, // this one day
+          ),
+          routeName: day.routeName,
+          day: day.day,
+          covering: day.covering,
+        ),
+      );
+    }
+    // Further out than that: a route they take over from a later date, or a
+    // day they cover.
+    final horizon = DateTime(today.year, today.month, today.day + SchedulePlan.defaultDays);
     for (final booking in RouteAssignment.routesFor(driverUid, assignments, now).upcoming) {
       final name = routeNames[booking.roundKey];
       if (name == null) continue;
       final day = _day(booking.effectiveFrom);
-      if (runDays.contains('${booking.roundKey}|$day')) continue; // its run sheet is here
-      cards[day == today ? RunPhase.today : RunPhase.upcoming]!.add(
-        DriverRunCard.booking(booking, routeName: name, day: day),
+      if (day.isBefore(horizon)) continue; // already in the plan above
+      cards[RunPhase.upcoming]!.add(
+        DriverRunCard.booking(booking, routeName: name, day: day, covering: booking.oneDay),
       );
     }
 

@@ -17,7 +17,7 @@ The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + 
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
 name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
 `build_rider_board.py`) — those names are the contract. Its tests run with
-`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (423 tests). Several features span both repos —
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (434 tests). Several features span both repos —
 route naming and the stop-order merge below are the current examples — and a client change that writes a
 new Firestore field is inert until that repo's `firestore.rules` is deployed.
 
@@ -33,7 +33,7 @@ several things that look like bugs (two presence states, no map panel on the boa
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (281 tests, all passing)
+- Run all tests: `flutter test` (292 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -118,7 +118,10 @@ RunDetailScreen        → one delivery_run + its stops, streamed: map with deli
                          + the driver's started / finished / total time, "Load sheet" (RunLoadScreen)
                          and "Delivery photos (n)"
                            → RunPhotosScreen (pod_photo_url per stop, from the pod-photos bucket)
-OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
+OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states)
+                         + driver_presence (a green dot on each signed-in driver with the app open,
+                           "Online now" / "Last seen 2:15 pm" via DriverPresenceStatus, online first,
+                           and "1 online · 1 offline" above the list) +
                          DriverAccessApi → driver-access function (remove / restore);
                          tap a row → DriverDetailScreen
 DriverDetailScreen     → "Tell me when <name> opens the app" (user_settings/{uid}.presence_alert_drivers,
@@ -140,6 +143,11 @@ SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the accoun
                          a driver has to accept; says on screen that it stops mattering once they sign in)
 OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
 ```
+
+**An owner's instruction edit** (`StopInstructionsSheet`) writes `stop_instructions` (it wins on every later
+run sheet) *and* the stop on that run (`instructions` + `instructions_source: owner`), so the driver sees it at
+once and is told (the backend's notify-stop-change). Route renames, stop edits and newly confirmed sheets also
+notify the run's driver from the backend; nothing in the app sends them.
 
 Collections touched from the client: `circuits` (read, delete, and a rename limited to
 `round`/`round_source`), `delivery_run/{id}/delivery_stop`, `run_sheet_upload`, `driver_invitations`,
@@ -628,6 +636,23 @@ request `@2x` on high-density screens (`retinaMode`).
 **Scheduling is one sheet, `showScheduleRunSheet`** (`lib/widgets/schedule_run_sheet.dart`). The Routes tab
 opens it with the route fixed (long-press, then the person icon); the driver page opens it with the driver
 fixed ("Schedule a run"). It sets the date, a **start** and a **finish** time, and **every day from then** vs **this day only**.
+**Days of the week.** "Repeats" takes a weekday picker (M T W T F S S, with Every day / Weekdays / Weekends quick
+picks). A subset saves `weekdays` (1 Mon - 7 Sun) on the row, and, with "No run on <other days>" on (the default), a
+second row in the same batch (`RouteAssigner.saveChoice`): no driver, the other weekdays, `off: true` - the route
+doesn't run then, which the roster shows as "Not running" rather than "No driver". `RouteAssignment.activeAt` filters
+regular rows by `appliesOn`, so each weekday follows its own latest row ("Sonia every day" then "Pawan Sat, Sun" leaves
+Sonia the weekdays), mirroring the backend's `domain/route_assignment.py`. Every sheet save goes through `saveChoice`.
+
+**Scheduled days show before their run sheet** (`SchedulePlan`, `lib/models/schedule_plan.dart`, tested): every route
+on every day it runs for the next 14 days, minus days that already have a sheet. The owner's Runs tab lists them in
+Today/Upcoming beside real runs, in date order ("Scheduled", tap to change that day). The driver's tabs and Home use
+them as bookings (`DriverSchedule.build`), so "every day" reads as days; handovers and covers further out than 14 days
+still come from `routesFor`.
+
+**A start time already gone by today can't be scheduled** (`startHasPassed` in `run_time.dart`, tested): the
+sheet shows "5:00 am today has already passed" with "Start tomorrow instead" / "Pick a later time", and
+Schedule stays disabled, since the backend would count such a run late the moment it was saved. Opened
+without a day, the sheet starts on tomorrow when the route's usual start has already passed today.
 The finish starts as start + the route's estimate (`addToStartTime`). The owner sets it to whatever
 they expect, and the sheet warns when the window is shorter than the estimate. The expected time comes from
 `RouteEstimates.forRoute`, which reads the latest run's `estimated_total_s`. It writes one

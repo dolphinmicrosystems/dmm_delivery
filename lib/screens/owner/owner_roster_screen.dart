@@ -189,12 +189,20 @@ class _SlotCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: slot.hasDriver ? AppColors.brandSoft : const Color(0x1AE4A83A),
+                color: slot.hasDriver
+                    ? AppColors.brandSoft
+                    : slot.off
+                    ? AppColors.surfaceMuted
+                    : const Color(0x1AE4A83A),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
-                slot.hasDriver ? Icons.person_rounded : Icons.person_off_rounded,
-                color: slot.hasDriver ? AppColors.brand : AppColors.warning,
+                slot.hasDriver
+                    ? Icons.person_rounded
+                    : slot.off
+                    ? Icons.event_busy_rounded
+                    : Icons.person_off_rounded,
+                color: slot.hasDriver ? AppColors.brand : (slot.off ? AppColors.inkMuted : AppColors.warning),
               ),
             ),
             const SizedBox(width: 14),
@@ -205,11 +213,13 @@ class _SlotCard extends StatelessWidget {
                   Text(slot.routeName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
                   Text(
-                    [slot.driverName ?? 'No driver - tap to assign', ?window].join(' · '),
+                    slot.off
+                        ? 'Not running this day'
+                        : [slot.driverName ?? 'No driver - tap to assign', ?window].join(' · '),
                     style: TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,
-                      color: slot.hasDriver ? AppColors.inkMuted : AppColors.warning,
+                      color: slot.needsDriver ? AppColors.warning : AppColors.inkMuted,
                     ),
                   ),
                 ],

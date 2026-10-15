@@ -264,15 +264,7 @@ class _Schedule extends StatelessWidget {
     if (choice == null || !context.mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await RouteAssigner.assign(
-        ownerUid: ownerUid,
-        roundKey: choice.roundKey,
-        effectiveFrom: choice.date,
-        driver: choice.driver,
-        startTime: choice.startTime,
-        endTime: choice.endTime,
-        oneDay: choice.oneDay,
-      );
+      await RouteAssigner.saveChoice(ownerUid: ownerUid, choice: choice);
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('schedule run failed', error, stack);
       messenger.showSnackBar(SnackBar(content: Text(RouteAssigner.errorMessage(error))));
@@ -326,15 +318,7 @@ class _Schedule extends StatelessWidget {
     await _write(
       context,
       'change times',
-      () => RouteAssigner.assign(
-        ownerUid: ownerUid,
-        roundKey: choice.roundKey,
-        effectiveFrom: choice.date,
-        driver: choice.driver,
-        startTime: choice.startTime,
-        endTime: choice.endTime,
-        oneDay: choice.oneDay,
-      ),
+      () => RouteAssigner.saveChoice(ownerUid: ownerUid, choice: choice),
     );
   }
 

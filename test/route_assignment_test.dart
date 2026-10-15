@@ -190,7 +190,10 @@ void main() {
 
     test('a cover with no times of its own keeps the regular start and end, as a pair', () {
       final keeps = [row('pawan', 1, start: '05:00', end: '07:44'), row('ben', 25, oneDay: true)];
-      final sets = [row('pawan', 1, start: '05:00', end: '07:44'), row('ben', 25, oneDay: true, start: '04:30')];
+      final sets = [
+        row('pawan', 1, start: '05:00', end: '07:44'),
+        row('ben', 25, oneDay: true, start: '04:30'),
+      ];
 
       final kept = RouteAssignment.activeAt(keeps, DateTime(2026, 9, 25, 3))!;
       expect((kept.startTime, kept.endTime), ('05:00', '07:44'));
@@ -263,5 +266,20 @@ void main() {
       final back = RouteAssignment.replacementFor(handover, rows);
       expect((back.driverUid, back.startTime, back.endTime), ('pawan', '05:00', '07:44'));
     });
+  });
+
+  test('each weekday follows its own latest row, as the backend does', () {
+    final rows = [
+      RouteAssignment(roundKey: 'run3', effectiveFrom: DateTime(2026, 9, 1), driverUid: 'sonia'),
+      RouteAssignment(
+        roundKey: 'run3',
+        effectiveFrom: DateTime(2026, 10, 16),
+        driverUid: 'pawan',
+        weekdays: const [6, 7],
+      ),
+    ];
+    expect(RouteAssignment.activeAt(rows, DateTime(2026, 10, 17, 12))?.driverUid, 'pawan'); // Sat
+    expect(RouteAssignment.activeAt(rows, DateTime(2026, 10, 19, 12))?.driverUid, 'sonia'); // Mon
+    expect(RouteAssignment.activeAt(rows, DateTime(2026, 10, 10, 12))?.driverUid, 'sonia'); // Sat, before
   });
 }

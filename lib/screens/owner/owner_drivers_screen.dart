@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/driver_invitation.dart';
+import '../../models/driver_presence_status.dart';
 import '../../services/driver_access_api.dart';
 import '../../services/driver_inviter.dart';
 import '../../settings/settings_store.dart';
@@ -194,6 +195,28 @@ class _DriverList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Who has the app open right now (DriverPresence), for the dot and the
+    // "Online now" / "Last seen" line on each row. Optional: if it fails to
+    // load, the roster still shows, just without it.
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('driver_presence')
+          .where('owner_uid', isEqualTo: authState.ownerUid)
+          .snapshots(),
+      builder: (context, presenceSnap) {
+        if (presenceSnap.hasError) {
+          AppLog.owner.error('presence stream failed', presenceSnap.error, presenceSnap.stackTrace);
+        }
+        final presence = {
+          for (final doc in presenceSnap.data?.docs ?? const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
+            doc.id: DriverPresenceStatus.fromMap(doc.data()),
+        };
+        return _roster(context, presence);
+      },
+    );
+  }
+
+  Widget _roster(BuildContext context, Map<String, DriverPresenceStatus> presence) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: authState.invitations(),
       builder: (context, snapshot) {
@@ -225,7 +248,16 @@ class _DriverList extends StatelessWidget {
         // question from current ones, and a roster that runs straight from
         // "Active driver" into "Removed" invites the owner to act on a row
         // that no longer means anything.
-        final working = invitations.where((i) => !i.isRemoved).toList();
+        bool isOnline(DriverInvitation i) =>
+            i.status == InvitationStatus.accepted && (presence[i.acceptedUid]?.online ?? false);
+        // Online drivers first; otherwise the roster's own order.
+        final working = invitations.where((i) => !i.isRemoved).toList()
+          ..sort((a, b) {
+            final byOnline = (isOnline(b) ? 1 : 0) - (isOnline(a) ? 1 : 0);
+            return byOnline != 0 ? byOnline : DriverInvitation.compare(a, b);
+          });
+        final drivers = working.where((i) => i.status == InvitationStatus.accepted && !i.isOwnerInvite);
+        final onlineCount = drivers.where(isOnline).length;
         final removed = invitations.where((i) => i.isRemoved).toList();
 
         if (invitations.isEmpty) {
@@ -251,16 +283,44 @@ class _DriverList extends StatelessWidget {
                   style: TextStyle(color: AppColors.inkMuted, fontSize: 13),
                 ),
               )
-            else
+            else ...[
+              if (drivers.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+                  child: Row(
+                    children: [
+                      const _PresenceDot(online: true, size: 9),
+                      const SizedBox(width: 6),
+                      Text(
+                        '$onlineCount online',
+                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(width: 14),
+                      const _PresenceDot(online: false, size: 9),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${drivers.length - onlineCount} offline',
+                        style: const TextStyle(fontSize: 12.5, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
               SurfaceCard(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Column(
                   children: [
                     for (final invitation in working)
-                      _DriverRow(invitation: invitation, authState: authState),
+                      _DriverRow(
+                        invitation: invitation,
+                        authState: authState,
+                        presence: invitation.status == InvitationStatus.accepted
+                            ? (presence[invitation.acceptedUid] ?? DriverPresenceStatus.unknown)
+                            : null,
+                      ),
                   ],
                 ),
               ),
+            ],
             // Kept on screen rather than tidied away: nothing is deleted, the
             // rounds these people drove still point at them, and restoring
             // somebody is the only way they get back in.
@@ -288,10 +348,14 @@ class _DriverList extends StatelessWidget {
 enum _DriverAction { rename, resend, remove, restore }
 
 class _DriverRow extends StatefulWidget {
-  const _DriverRow({required this.invitation, required this.authState});
+  const _DriverRow({required this.invitation, required this.authState, this.presence});
 
   final DriverInvitation invitation;
   final AuthState authState;
+
+  /// Whether they have the app open; null for anyone who hasn't signed in
+  /// (or was removed), who can't be online.
+  final DriverPresenceStatus? presence;
 
   @override
   State<_DriverRow> createState() => _DriverRowState();
@@ -331,17 +395,31 @@ class _DriverRowState extends State<_DriverRow> {
           ),
         );
       },
-      leading: Icon(
-        switch (_invitation.status) {
-          InvitationStatus.accepted => Icons.local_shipping_rounded,
-          InvitationStatus.removed => Icons.person_off_outlined,
-          _ => Icons.mark_email_unread_outlined,
-        },
-        color: switch (_invitation.status) {
-          InvitationStatus.expired => AppColors.warning,
-          InvitationStatus.removed => AppColors.inkMuted,
-          _ => AppColors.brand,
-        },
+      leading: SizedBox(
+        width: 40,
+        height: 40,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Center(
+              child: Icon(
+                switch (_invitation.status) {
+                  InvitationStatus.accepted => Icons.local_shipping_rounded,
+                  InvitationStatus.removed => Icons.person_off_outlined,
+                  _ => Icons.mark_email_unread_outlined,
+                },
+                color: switch (_invitation.status) {
+                  InvitationStatus.expired => AppColors.warning,
+                  InvitationStatus.removed => AppColors.inkMuted,
+                  _ => AppColors.brand,
+                },
+              ),
+            ),
+            // Green while they have the app open, grey otherwise.
+            if (widget.presence case final presence?)
+              Positioned(right: 0, bottom: 2, child: _PresenceDot(online: presence.online, size: 12, ringed: true)),
+          ],
+        ),
       ),
       title: Text(
         _invitation.displayName,
@@ -357,6 +435,17 @@ class _DriverRowState extends State<_DriverRow> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
           ),
+          if (widget.presence case final presence?) ...[
+            const SizedBox(height: 2),
+            Text(
+              presence.label(DateTime.now()),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: presence.online ? AppColors.success : AppColors.inkMuted,
+              ),
+            ),
+          ],
           const SizedBox(height: 6),
           Row(
             children: [
@@ -629,6 +718,33 @@ class _DriverNameDialogState extends State<_DriverNameDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(onPressed: _save, child: const Text('Save')),
       ],
+    );
+  }
+}
+
+
+/// The online dot: green while a driver has the app open, grey otherwise.
+/// [ringed] adds a white ring, for sitting on top of an icon.
+class _PresenceDot extends StatelessWidget {
+  const _PresenceDot({required this.online, required this.size, this.ringed = false});
+
+  final bool online;
+  final double size;
+  final bool ringed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: online ? AppColors.success : const Color(0xFFB8C0CC),
+        shape: BoxShape.circle,
+        border: ringed ? Border.all(color: Colors.white, width: 2) : null,
+        boxShadow: online
+            ? [BoxShadow(color: AppColors.success.withValues(alpha: 0.45), blurRadius: 6)]
+            : null,
+      ),
     );
   }
 }

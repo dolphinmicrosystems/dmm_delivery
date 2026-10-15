@@ -232,15 +232,7 @@ class _CircuitCardState extends State<_CircuitCard> {
     }
 
     try {
-      await RouteAssigner.assign(
-        ownerUid: ownerUid,
-        roundKey: widget.roundKey,
-        effectiveFrom: choice.date,
-        driver: choice.driver,
-        startTime: choice.startTime,
-        endTime: choice.endTime,
-        oneDay: choice.oneDay,
-      );
+      await RouteAssigner.saveChoice(ownerUid: ownerUid, choice: choice);
       if (mounted) setState(() => _revealActions = false);
     } on FirebaseException catch (error, stack) {
       AppLog.owner.error('route assign failed', error, stack, {'roundKey': widget.roundKey});

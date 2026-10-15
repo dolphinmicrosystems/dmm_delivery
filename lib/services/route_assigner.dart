@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/driver_invitation.dart';
 import '../models/route_assignment.dart';
+import '../widgets/schedule_run_sheet.dart';
 import '../util/app_log.dart';
 
 /// Assigning a driver to a route.
@@ -46,6 +47,41 @@ class RouteAssigner {
     oneDay: oneDay,
   );
 
+  /// Saves what the owner picked in the scheduling sheet: one row, plus -
+  /// for a driver on some days of the week whose route doesn't run on the
+  /// rest - a second row marking those days as not running. Both go in one
+  /// batch, so the route is never half-changed.
+  static Future<void> saveChoice({required String ownerUid, required ScheduleChoice choice}) async {
+    final batch = FirebaseFirestore.instance.batch();
+    _add(
+      batch,
+      ownerUid: ownerUid,
+      roundKey: choice.roundKey,
+      effectiveFrom: choice.date,
+      driverUid: choice.driver?.acceptedUid,
+      driverName: choice.driver?.displayName,
+      startTime: choice.startTime,
+      endTime: choice.endTime,
+      oneDay: choice.oneDay,
+      weekdays: choice.oneDay ? null : choice.weekdays,
+    );
+    final otherDays = choice.otherDaysOff;
+    if (otherDays != null && otherDays.isNotEmpty) {
+      _add(
+        batch,
+        ownerUid: ownerUid,
+        roundKey: choice.roundKey,
+        effectiveFrom: choice.date,
+        driverUid: null,
+        driverName: null,
+        weekdays: otherDays,
+        off: true,
+      );
+    }
+    await batch.commit();
+    AppLog.owner('route scheduled', {'roundKey': choice.roundKey, 'otherDaysOff': otherDays?.length ?? 0});
+  }
+
   /// Takes [roundKey] off whoever drives it, from [from] on: the route has no
   /// driver until the owner assigns one. The driver is notified
   /// (notify-assignment: "No longer on ...").
@@ -87,6 +123,35 @@ class RouteAssigner {
     String? endTime,
     bool oneDay = false,
   }) async {
+    final batch = FirebaseFirestore.instance.batch();
+    _add(
+      batch,
+      ownerUid: ownerUid,
+      roundKey: roundKey,
+      effectiveFrom: effectiveFrom,
+      driverUid: driverUid,
+      driverName: driverName,
+      startTime: startTime,
+      endTime: endTime,
+      oneDay: oneDay,
+    );
+    await batch.commit();
+    AppLog.owner('route assigned', {'roundKey': roundKey});
+  }
+
+  static void _add(
+    WriteBatch batch, {
+    required String ownerUid,
+    required String roundKey,
+    required DateTime effectiveFrom,
+    required String? driverUid,
+    required String? driverName,
+    String? startTime,
+    String? endTime,
+    bool oneDay = false,
+    List<int>? weekdays,
+    bool off = false,
+  }) {
     AppLog.owner('assigning route', {
       'roundKey': roundKey,
       'assigned': driverUid != null,
@@ -94,9 +159,10 @@ class RouteAssigner {
       'startTime': startTime,
       'endTime': endTime,
       'oneDay': oneDay,
+      'weekdays': weekdays?.join(','),
+      'off': off,
     });
-
-    await FirebaseFirestore.instance.collection('route_assignments').add({
+    batch.set(FirebaseFirestore.instance.collection('route_assignments').doc(), {
       'owner_uid': ownerUid,
       'round_key': roundKey,
       // The uid, not the email: it is what confirm-run-sheet stamps onto
@@ -113,11 +179,13 @@ class RouteAssigner {
       if (startTime != null) 'end_time': ?endTime,
       // Only on effective_from's day; see RouteAssignment.oneDay.
       if (oneDay) 'one_day': true,
+      // Some days of the week only (1 Mon - 7 Sun); absent is every day.
+      if (weekdays != null && weekdays.length < 7) 'weekdays': ([...weekdays]..sort()),
+      // The route doesn't run on those days.
+      if (off) 'off': true,
       'created_at': FieldValue.serverTimestamp(),
       'created_by': ownerUid,
     });
-
-    AppLog.owner('route assigned', {'roundKey': roundKey});
   }
 
   /// The sentence to show when the write is refused.

@@ -90,3 +90,25 @@ Duration? windowLength(String? startTime, String? endTime) {
   if (minutes <= 0) minutes += 24 * 60;
   return Duration(minutes: minutes);
 }
+
+/// Whether a run starting at [startTime] ("HH:MM") on [day] would already
+/// have started by [now] - so can't be scheduled: nobody can be sent back to
+/// 5:00 am at 4:27 pm, and the backend would count it late the moment it was
+/// saved. False with no start time (the times that applied before stand).
+bool startHasPassed(DateTime day, String? startTime, DateTime now) {
+  final time = parseStartTime(startTime);
+  if (time == null) return false;
+  return !DateTime(day.year, day.month, day.day, time.hour, time.minute).isAfter(now);
+}
+
+/// "Mon, Tue, Sat, Sun", "Weekdays", "Weekends", "Every day" - days of the
+/// week (1 Mon - 7 Sun) as the schedule says them. Mirrors the backend's
+/// route_assignment.weekdays_label.
+String weekdaysLabel(Set<int> days) {
+  const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final chosen = [for (var d = 1; d <= 7; d++) if (days.contains(d)) d];
+  if (chosen.isEmpty || chosen.length == 7) return 'Every day';
+  if (chosen.length == 5 && chosen.last == 5) return 'Weekdays';
+  if (chosen.length == 2 && chosen.first == 6) return 'Weekends';
+  return [for (final d in chosen) names[d - 1]].join(', ');
+}

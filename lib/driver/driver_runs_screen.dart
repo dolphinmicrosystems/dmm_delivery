@@ -252,7 +252,7 @@ class _BookingCard extends StatelessWidget {
                   ),
                 ),
                 PillBadge(
-                  label: booking.oneDay ? 'Covering' : 'Your route',
+                  label: card.covering ? 'Covering' : (booking.oneDay ? 'Scheduled' : 'Your route'),
                   background: AppColors.brandSoft,
                   foreground: AppColors.brand,
                 ),

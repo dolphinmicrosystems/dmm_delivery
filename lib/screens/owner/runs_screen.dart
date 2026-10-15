@@ -5,6 +5,7 @@ import '../../models/driver_stats.dart';
 import '../../models/run_listing.dart';
 import '../../models/run_time.dart';
 import '../../models/run_timing.dart';
+import '../../models/schedule_plan.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/pill_badge.dart';
@@ -12,6 +13,7 @@ import '../../widgets/run_timing_pill.dart';
 import '../../widgets/surface_card.dart';
 import 'owner_run_data.dart';
 import 'run_detail_screen.dart';
+import 'schedule_actions.dart';
 
 /// The Runs tab: every run - one route's deliveries for one day - split into
 /// Upcoming, Today and Past, with who drives it, when, and how far along it is.
@@ -76,19 +78,51 @@ class _RunList extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final runs = RunListing.sorted(data.runs.where((run) => run.phase(now) == phase), phase);
-    if (runs.isEmpty) {
+    // Today and Upcoming also show the days the schedule has a route running
+    // but no run sheet yet - "every day" and "Mon, Tue, weekends" as actual
+    // days (SchedulePlan), for the next two weeks.
+    final today = DateTime(now.year, now.month, now.day);
+    final planned = phase == RunPhase.past
+        ? const <PlannedRun>[]
+        : [
+            for (final day in SchedulePlan.days(
+              routeNames: data.routeNames,
+              assignmentsByRoute: data.assignmentsByRoute,
+              driverNames: data.driverNames,
+              hasSheet: {
+                for (final run in data.runs)
+                  if (run.date case final date?) SchedulePlan.key(run.roundKey, date),
+              },
+              from: today,
+            ))
+              if ((day.day == today) == (phase == RunPhase.today)) day,
+          ];
+    if (runs.isEmpty && planned.isEmpty) {
       return ListView(
         padding: const EdgeInsets.all(24),
         children: [
           Text(switch (phase) {
             RunPhase.upcoming =>
-              'No runs coming up. Upload a run sheet on the Routes tab and it '
-                  'appears here for the date printed on it.',
+              'No runs coming up. Schedule a route (Routes tab, or Home → Schedule a run) and its days '
+                  'appear here; a run sheet uploaded for a day takes its place.',
             RunPhase.today => 'No runs today.',
             RunPhase.past => 'No past runs yet.',
           }, style: const TextStyle(fontSize: 13, color: AppColors.inkMuted, height: 1.4)),
         ],
       );
+    }
+    // One list in date order (then start time): an uploaded run on the 20th
+    // after a scheduled day on the 16th. Past keeps the runs' own order.
+    final entries = <({RunListing? run, PlannedRun? planned, DateTime day, String start})>[
+      for (final run in runs)
+        (run: run, planned: null, day: run.date ?? today, start: data.crewFor(run).startTime ?? '99:99'),
+      for (final day in planned) (run: null, planned: day, day: day.day, start: day.startTime ?? '99:99'),
+    ];
+    if (phase != RunPhase.past) {
+      entries.sort((a, b) {
+        final byDay = a.day.compareTo(b.day);
+        return byDay != 0 ? byDay : a.start.compareTo(b.start);
+      });
     }
     // Today's runs on the road also read their heartbeat (run_live), for
     // "No signal since ...".
@@ -101,10 +135,28 @@ class _RunList extends StatelessWidget {
       ],
       builder: (context, lastSeen) => ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        itemCount: runs.length,
+        itemCount: entries.length,
         separatorBuilder: (_, _) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
-          final run = runs[index];
+          final entry = entries[index];
+          if (entry.planned case final day?) {
+            return _PlannedCard(
+              planned: day,
+              now: now,
+              // Change who drives that day, or when: the scheduling sheet,
+              // on that day.
+              onTap: () => scheduleRoute(
+                context,
+                authState: authState,
+                roundKey: day.roundKey,
+                routeName: day.routeName,
+                assignments: data.assignmentsByRoute[day.roundKey] ?? const [],
+                date: day.day,
+                oneDay: true,
+              ),
+            );
+          }
+          final run = entry.run!;
           final crew = data.crewFor(run);
           return _RunCard(
             run: run,
@@ -250,5 +302,58 @@ class _RunCard extends StatelessWidget {
             '${estimate == null ? '' : ' · about ${DeliveryEstimate.format(estimate)}'}'
             '${finish == null ? '' : ', back ~$finish'}',
     };
+  }
+}
+
+/// A day the schedule has a route running, with no run sheet uploaded yet.
+class _PlannedCard extends StatelessWidget {
+  const _PlannedCard({required this.planned, required this.now, required this.onTap});
+
+  final PlannedRun planned;
+  final DateTime now;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final driver = planned.driverName;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: SurfaceCard(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(planned.routeName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                ),
+                PillBadge(
+                  label: planned.covering ? 'Cover' : 'Scheduled',
+                  background: AppColors.surfaceMuted,
+                  foreground: AppColors.inkMuted,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [relativeDayLabel(planned.day, now), ?formatWindow(planned.startTime, planned.endTime), driver ?? 'No driver']
+                  .join(' · '),
+              style: TextStyle(
+                fontSize: 12.5,
+                color: driver == null ? AppColors.warning : AppColors.inkMuted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Run sheet not uploaded yet · tap to change the driver or times',
+              style: TextStyle(fontSize: 12, color: AppColors.inkMuted),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

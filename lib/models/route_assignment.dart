@@ -30,6 +30,8 @@ class RouteAssignment {
     this.startTime,
     this.endTime,
     this.oneDay = false,
+    this.weekdays,
+    this.off = false,
     this.id,
   });
 
@@ -57,6 +59,19 @@ class RouteAssignment {
   /// Applies on [effectiveFrom]'s day only.
   final bool oneDay;
 
+  /// The days of the week a regular row covers, 1 (Mon) - 7 (Sun); null for
+  /// every day. Each weekday follows its own latest row, so "Pawan on Sat,
+  /// Sun" after "Sonia every day" leaves Sonia the weekdays. Mirrors the
+  /// backend's domain/route_assignment.py.
+  final List<int>? weekdays;
+
+  /// The route doesn't run on [weekdays] at all (no driver) - not the same
+  /// as a day nobody has been given yet.
+  final bool off;
+
+  /// Whether this row covers [at]'s day of the week.
+  bool appliesOn(DateTime at) => weekdays == null || weekdays!.contains(at.toLocal().weekday);
+
   bool get isUnassignment => driverUid == null;
 
   RouteAssignment _withTimes(String? start, String? end) => RouteAssignment(
@@ -68,6 +83,8 @@ class RouteAssignment {
     startTime: start,
     endTime: end,
     oneDay: oneDay,
+    weekdays: weekdays,
+    off: off,
     id: id,
   );
 
@@ -86,6 +103,14 @@ class RouteAssignment {
       startTime: data['start_time'] as String?,
       endTime: data['end_time'] as String?,
       oneDay: data['one_day'] == true,
+      weekdays: switch (data['weekdays']) {
+        final List<dynamic> days when days.isNotEmpty => [
+          for (final day in days)
+            if (day is num && day >= 1 && day <= 7) day.toInt(),
+        ],
+        _ => null,
+      },
+      off: data['off'] == true,
     );
   }
 
@@ -103,7 +128,7 @@ class RouteAssignment {
         if (forToday == null || _createdLater(assignment, forToday)) forToday = assignment;
         continue;
       }
-      if (assignment.effectiveFrom.isAfter(at)) continue;
+      if (assignment.effectiveFrom.isAfter(at) || !assignment.appliesOn(at)) continue;
       if (regular == null || assignment._outranks(regular)) regular = assignment;
     }
     if (forToday == null) return regular;
@@ -154,8 +179,16 @@ class RouteAssignment {
     for (final entry in byRoute(assignments).entries) {
       // Their regular routes - a colleague covering one of them today does not
       // take it off their page.
-      final regular = activeAt(entry.value.where((a) => !a.oneDay), at);
-      if (regular?.driverUid == driverUid) current.add(entry.key);
+      // Theirs on any day of the coming week by a row already in force: a
+      // Mon/Tue route is theirs on a Wednesday too. (A row that only starts
+      // later is a handover - upcoming, below.)
+      final regulars = entry.value.where((a) => !a.oneDay);
+      final day = _day(at);
+      if ([
+        for (var i = 0; i < 7; i++) activeAt(regulars, DateTime(day.year, day.month, day.day + i, 12)),
+      ].any((active) => active?.driverUid == driverUid && !active!.effectiveFrom.isAfter(at))) {
+        current.add(entry.key);
+      }
       final next = entry.value.where((a) => !a.oneDay && a.effectiveFrom.isAfter(at)).toList()
         ..sort((a, b) => a.effectiveFrom.compareTo(b.effectiveFrom));
       if (next.isNotEmpty && next.first.driverUid == driverUid) upcoming.add(next.first);
