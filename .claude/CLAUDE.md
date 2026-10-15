@@ -1,0 +1,656 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+Flutter app "Blue Dot" (package `dmm_delivery`) — a Dunedin milk-delivery app backed by a real
+Firebase/GCP project. Two roles, decided server-side, not by a UI toggle:
+
+- **Owner** — uploads run-sheet PDFs, reviews/reorders the parsed route, watches a driver board. This is
+  where essentially all real work has happened.
+- **Driver** (`lib/driver/`): sees their runs (Upcoming / Today / Past, each past run with its full history)
+  and their routes, and drives a run: map following the van, voice, Arrived, photo,
+  Delivered (`lib/driver/driving/`).
+
+The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + Terraform + Firestore
+rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
+name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
+`build_rider_board.py`) — those names are the contract. Its tests run with
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (423 tests). Several features span both repos —
+route naming and the stop-order merge below are the current examples — and a client change that writes a
+new Firestore field is inert until that repo's `firestore.rules` is deployed.
+
+`plan.md` is the working design record: completed screens, the **"What is real vs mock"** table, the Board
+API shape, and decisions marked "worth not re-litigating". Read it before changing Owner behaviour —
+several things that look like bugs (two presence states, no map panel on the board) are deliberate and explained there.
+
+## Commands
+
+- Install deps: `flutter pub get`
+- Run app: `flutter run --dart-define-from-file=dart_defines.json` — copy `dart_defines.example.json` to
+  the gitignored `dart_defines.json` and put the CARTO key in it first; the VS Code launch configs pass
+  the same flag, so they fail to start until that file exists. Without a key the maps still work, but
+  every basemap tile is watermarked — see the CARTO note under Conventions
+- Analyze/lint: `flutter analyze`
+- Run all tests: `flutter test` (281 tests, all passing)
+- Run a single test file: `flutter test test/run_sheet_review_test.dart`
+- Run one test by name: `flutter test --plain-name 'is independent of stop order'`
+- Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
+  formatter's style, and Dart 3.13's tall-style formatter rewrites 58 files that nobody touched.
+  Match the surrounding style by hand instead. (Re-enable it the day someone reformats the whole
+  repo in one deliberate commit and pins `formatter: page_width` in `analysis_options.yaml`.)
+- Release build (what `cloudbuild.yaml` runs): `flutter build appbundle --release` — signing is not wired
+  up yet, so this produces an unsigned/debug-keyed bundle
+- Regenerate environment config: `GCP_PROJECT_ID=i-destiny-428904-s2 ./tool/generate_infra_config.sh`
+
+Lints come from `package:flutter_lints/flutter.yaml`; the analyzer excludes `build/**` and every
+platform directory (`android/**`, `ios/**`, `web/**`, …).
+
+**`BUILD.md` is the authority on builds that touch infra** — its decision table covers the four cases
+(plain local build, routine config sync, environment move, Cloud Build pipeline). The short version: a
+normal build needs no GCP credentials at all; only a bucket/client rotation or an environment change
+needs the script.
+
+## Tests
+
+`test/` is six files of pure model + widget tests with **no Firebase, network or Firestore fakes** —
+models are constructed directly (`RunStop(...)`, `StopItem(...)`), and widget tests pump `StopCard` /
+`RoutePreviewMap` / the reorderable list and drive real gestures. Nothing exercises `RunStop.fromDoc`,
+any `StreamBuilder`, so **logic worth testing has to live in a model or widget the test
+can construct by hand** — put aggregation and parsing there rather than inside a screen's `build`. Test
+fixtures use numbers from a real "South Runsheet" export; keep it that way over inventing quantities.
+
+## Environment config
+
+`lib/config/infra_config.dart` is **generated — never hand-edit it.** `tool/generate_infra_config.sh`
+rewrites it from *live* GCP state, not from Terraform or the backend repo's filesystem:
+
+| Constant | Read from |
+| --- | --- |
+| `runSheetsBucket` | the `process-run-sheet-upload` function's own Storage trigger (name-matching buckets is unsafe — a stale `run-sheets-*` bucket exists) |
+| `googleSignInServerClientId` | Firebase Auth's Google IdP config (not Terraform-managed) |
+| `podPhotosBucket` | the one `*-pod-photos-*` bucket in the project (empty if there isn't exactly one: the driving screen then delivers without a photo) |
+| `riderBoardUrl` | the `rider-board` function's URL. **Nothing in the app reads it any more** (the Runs tab replaced the board); still generated while the function is deployed |
+
+If `GCP_PROJECT_ID` disagrees with the committed `lib/firebase_options.dart`, the script runs
+`flutterfire configure` itself. That branch must stay local and human-committed — in CI those writes die
+with the ephemeral workspace.
+
+## Architecture
+
+**Auth decides everything.** `main.dart` initializes Firebase and hands one long-lived `AuthState` to
+`AuthGate`. `AuthState` (`lib/state/auth_state.dart`) wraps Firebase Auth + Google Sign-In and listens to
+`idTokenChanges`, reading the `role` **custom claim** the backend's `beforeSignIn` blocking function sets.
+`AuthGate` maps `AuthStatus` → screen; `RootShell` maps role → shell. Notes that bite:
+
+- `AuthRole.driver` is this app's word for what the backend, Firestore rules and the API all call
+  **`rider`**. Both spellings are load-bearing; don't unify them.
+- Sign-in forces `getIdTokenResult(true)` — the role claim is set server-side *during* this sign-in, so a
+  cached token reads back as "no role".
+- `AuthStatus.needsRole` is a defensive dead-end, not an expected state.
+
+**Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
+`DriverShell` (`lib/driver/`, tabs Home/Runs/Load/Routes; online whenever the app is open) and *everyone else,
+including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's tiles switch tabs through `OwnerTab`). Owner screens are **bodies, not
+`Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
+tabs via `IndexedStack`.
+
+**Owner data flow is real Firestore + Cloud Functions, no state package.** Screens read live data
+directly with `StreamBuilder`/`FutureBuilder`; there is no repository layer and no `AppState` involvement.
+
+```
+UploadRunSheetScreen   → PDF to InfraConfig.runSheetsBucket at {roundKey}/{uploadId}.pdf
+RunSheetProgressScreen → streams run_sheet_upload/{uploadId}.status
+RunSheetReviewScreen   → reads delivery_run/{runId}/delivery_stop (seq_order), map + drag-reorder
+                         + tap-a-pin + remove-a-stop + per-product load-out totals
+                         + editable route name;
+                         writes status (+ manual_order, route_name/route_name_source) back
+RouteMapScreen         → circuits/{roundKey} → delivery_run/{latest} (streamed: road path, times) + its
+                         stops (excluded ones filtered out). Long-press/handle to drag, ✕ to remove, Undo;
+                         saved at once by RouteEditor (seq_order/excluded + order_revision +1), after which
+                         the backend's refresh-run redraws the road and re-times the route
+OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → RouteMapScreen;
+                         long-press a card to rename (round/round_source) or delete
+RunsScreen             → delivery_run (owner_uid, status == sequenced) + circuits + route_assignments +
+                         driver_invitations → RunListing cards in Upcoming / Today / Past tabs
+RunDetailScreen        → one delivery_run + its stops, streamed: map with delivered stops ticked, progress
+                         + the driver's started / finished / total time, "Load sheet" (RunLoadScreen)
+                         and "Delivery photos (n)"
+                           → RunPhotosScreen (pod_photo_url per stop, from the pod-photos bucket)
+OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
+                         DriverAccessApi → driver-access function (remove / restore);
+                         tap a row → DriverDetailScreen
+DriverDetailScreen     → "Tell me when <name> opens the app" (user_settings/{uid}.presence_alert_drivers,
+                           this driver's uid; off unless turned on)
+                         + driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
+                         + route_assignments/circuits: the Schedule section (regular routes, upcoming
+                           runs, days a colleague covers) and "Schedule a run"; each row's ⋮ menu
+                           changes times, removes the route from the driver, or cancels a booking
+                           (RouteAssigner.removeDriver / cancelBooking - new rows, never edits)
+                         + vehicles (VehicleService: assign / change / remove / add, one per driver)
+SettingsScreen         → (menu; lib/settings/) user_profiles/{uid}, the account card → OwnerProfileScreen
+                         + user_settings/{uid}.driver_presence_alerts ("Drivers opening the app",
+                           every driver; off unless turned on)
+                         + user_settings/{uid}.late_start_alerts ("Late and stopped runs", from run-alerts:
+                           late starts, running late, and an app that stopped reporting)
+                         + app_settings/{owner}.default_stop_seconds ("Time at each stop": what
+                         an unlearned address costs in every estimate)
+                         + app_settings/{owner}.invitation_ttl_days (the invitation deadline: how long
+                         a driver has to accept; says on screen that it stops mattering once they sign in)
+OwnerProfileScreen     → user_profiles/{uid} — name/age/gender/phone, placeholder data
+```
+
+Collections touched from the client: `circuits` (read, delete, and a rename limited to
+`round`/`round_source`), `delivery_run/{id}/delivery_stop`, `run_sheet_upload`, `driver_invitations`,
+`addresses` (read-only geocode cache), `stop_instructions` (owner override field only — Firestore rules
+allow that one field directly, no function needed), `app_settings/invitations` (invitation TTL), `user_profiles/{uid}` (own profile; owners may read any).
+
+**The Runs tab is real data only.** It replaced the "Maps" board, which was built on the rider-board
+function's mock route shape and randomised driver position; that board, `RiderBoardApi` and its models
+are deleted.
+- **A run** is one route's deliveries for one day: the confirmed run sheet, dated by
+  `delivery_run.delivery_date` (the sheet's own "DD/MM/YYYY", parsed by `parseSheetDate`).
+- **`RunListing.phase` sorts runs into tabs:** finished runs are past; otherwise the date decides.
+  `status` gives not started / on the road / done / not finished / not run.
+- **Progress** (`delivered_count`, `started_at`, `last_delivered_at`, `completed_at`, `next_stop`) is written
+  onto the run by the backend on every stop marked delivered, so a list costs one read per run.
+- **Driver and start time:** `run.rider_id`, else the route's schedule for that day
+  (`RouteAssignment.activeAt` at midday).
+- **Excluded from the list:** runs of deleted routes, and `superseded` runs (replaced by a same-day
+  re-upload).
+- **On time or late** (`RunTiming`, `lib/models/run_timing.dart`, tested in `test/run_timing_test.dart`).
+  One rule for every screen, owner and driver, so both always read the same words:
+  - **States:** "Not started", "Not started - 15 min late" (10 min past the start), "On time",
+    "12 min late", "No signal since 6:40 am", "Finished 20 min late", "Not finished".
+  - **Expected finish:** the schedule's `end_time`, else start + `estimated_total_s`.
+  - **Projected finish:** now + the estimate's share for the stops left; late from 5 minutes over.
+  - **No signal:** 20 minutes since the latest of the start, the last delivery and the heartbeat
+    (`run_live.last_seen_at`).
+  - The thresholds mirror the backend's `domain/run_alerts.py`, which sends the matching alerts. Change
+    both together.
+  - Shown as `RunTimingPill` on Home's Live now, the Runs tab cards, the run screen header, the driver's
+    Home card and the driving screen.
+- **Owner Home** (`owner_home_screen.dart`), tiles throughout, every number from real data:
+  - a header card (date, greeting, one line on how the day is going);
+  - **Today** tiles: runs done, stops delivered, drivers online (`driver_presence`, online, intersected
+    with accepted driver invitations), and how many things need attention. Each opens its tab
+    (`OwnerTab`, passed up to `_OwnerShell`);
+  - **Needs attention:** no signal, left, late, late to start, and today's or tomorrow's runs with no
+    driver (tap to assign, via `scheduleRoute` on that day, "this day only");
+  - **Live now** (`LiveRunCard` in `live_run_card.dart`): driver, vehicle, progress, next stop, back-by;
+  - **Coming up:** today's runs still to start, then tomorrow's;
+  - **Quick actions** as tiles: Delivery roster, Schedule a run (`pickRouteAndSchedule`: route, then
+    the shared sheet), Upload run sheet, Invite drivers, Runs & history, Settings.
+  - The counting is pure and tested: `OwnerToday` (`lib/models/owner_today.dart`,
+    `test/owner_today_test.dart`).
+  - `OwnerRunDataBuilder` (`owner_run_data.dart`) loads the runs, routes, schedule, names and vehicles for
+    Home, the Runs tab and the roster. Home passes `onlyDays` (today, tomorrow), so it reads those runs
+    only, by exact `delivery_date` (zero-padded "DD/MM/YYYY"; the backend's parser guarantees the padding).
+    The Runs tab still reads every run (its Past tab is the history): paging it is the next step for a
+    big fleet. `RunLiveBuilder` reads `run_live` for the runs under way, in queries of 30 ids
+    (`whereIn`'s limit), merged, so any number of live runs get their heartbeat.
+- **Delivery roster** (`owner_roster_screen.dart`): the next 7 days as day chips (a dot marks a day with a
+  route nobody drives), and every route that day with its driver and times. Built by `WeekRoster`
+  (`lib/models/week_roster.dart`, tested) from `route_assignments` through `RouteAssignment.activeAt` at
+  midday, the same rule as everywhere else. Tapping a route opens `showScheduleRunSheet` on that day,
+  preset to "this day only" (the sheet now takes `date` and `oneDay`). This replaces the disabled
+  "Delivery roster - Scheduling not built yet" card.
+- **The heartbeat** (`lib/driver/driving/run_heartbeat.dart`): while a started run's driving screen is
+  open, it writes `run_live/{runId}` once a minute (server time, plus the van's position). Closing the
+  app, a flat battery and no signal all show as silence. The van position isn't drawn on the owner's map
+  yet; the data is there for it.
+
+**Map data is data, never an image.** The client owns the viewport and renders tiles, overlays and
+markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps below).
+
+## Conventions and traps
+
+- **Never upload to the default Firebase Storage bucket.** Only `InfraConfig.runSheetsBucket` has the
+  Storage trigger and the owner-only write rule bound to it; the default bucket silently never processes.
+- **CARTO basemaps need an API key, and say so in ink rather than in an error.** Since August 2026 an
+  unkeyed tile request still returns HTTP 200 and a valid PNG — with "API KEY REQUIRED" printed across
+  the middle. No exception, no failed request, nothing for a tile layer to report: the only symptom is a
+  screenshot. The key is free from `carto.com/basemaps/apikey`, arrives by email with no account, and
+  rides as `?key=` (**not** `?api_key=`, which is silently ignored). It lives in `MapConfig` behind
+  `--dart-define=CARTO_API_KEY`, never hardcoded, and `cloudbuild.yaml` passes it as `_CARTO_API_KEY`.
+  `MapConfig.basemapUrlFor` exists so both branches are testable — `cartoApiKey` is a compile-time
+  constant, so a test of the getter only ever sees the branch the test run was built with. CARTO's terms
+  require the CARTO + OpenStreetMap credit `BasemapAttribution` renders on every map; they are also
+  retiring raster PNG basemaps in favour of vector, so this is a stopgap with a shelf life.
+- **`DepotLocator.addressKey` mirrors the backend's `firestore_paths.address_key`** (sha256 of the
+  trimmed, lowercased address). The two are a contract — change one and you must change the other.
+- **A re-upload is an amendment, not a redo**, and the client's copy promises that. Re-uploading a sheet
+  for an existing route keeps its name, the stop order the owner dragged, and their per-stop
+  instructions; the backend only pays for what changed. `process_run_sheet_upload.py` picks one of three
+  `order_strategy` values:
+  - `optimized`: first upload, sequenced by Google Route Optimization on the road network.
+  - `reused`: same addresses, confirmed order stands.
+  - `merged`: stops added or removed; confirmed order kept and new ones slotted in by `domain/run_order.py`.
+  - `learned`: a new route, often one deleted and re-uploaded, that inherits a driver's previously driven
+    order.
+
+  Only `optimized` costs a routing call. `RunSheetDiff.orderNote` is what says
+  so on screen; treat an unknown strategy as `optimized`, i.e. **never** claim the order survived.
+- **A route's name has the same precedence rule as a stop's instructions**: what the owner typed beats the
+  name they gave it before, which beats the PDF's `Round:` heading. `circuits.round_source == 'owner'` is
+  what stops next week's parsed "Run 2" reclaiming a renamed route, so a write that sets `round` without
+  it silently reverts on the next upload. `circuits.pdf_round` is kept separately and is the *only* thing
+  `round_mismatch` may compare against — comparing the display name flags every upload of a renamed route.
+- **`RunSheetProgressScreen` must never render a bare spinner.** Every way the pipeline can fail looks
+  the same from the client - the document just never reaches `ready_for_review` - so the screen checks
+  `snapshot.hasError` **before** `snapshot.data` (reading the data first turns a permission-denied into a
+  permanent spinner), treats a missing document as its own state, and runs a 90s stall timer restarted on
+  every status change. The timer is a hint, not a deadline: a function killed mid-stage writes no `error`
+  status because a timeout is not a catchable exception, and the Cloud Function's own limit is 300s, so
+  the stall message only ever *adds* a way out while the stream stays live. Nothing here is unit-tested -
+  the screen needs Firebase to construct - which is the usual reason to keep it this simple.
+- **Leaving a screen with unapplied edits is guarded, and only then.** `UploadRunSheetScreen` and
+  `RunSheetReviewScreen` wrap their `Scaffold` in `PopScope` inside a `ValueListenableBuilder` on the name
+  controller — `canPop` is a constructor argument, so it is only as fresh as the last build, and typing
+  does not otherwise call `setState`. The dirty test is `RouteName.isRenameOf` (plus `_reordered` on the
+  review screen), **never** raw `text != original`: a dialog that fires when nothing changed is what
+  teaches people to dismiss it unread. Re-issue the pop with `Navigator.pop`, not `maybePop`, or PopScope
+  re-asks the question it just answered. `popUntil` in `_respond` is unaffected — `PopScope` gates
+  `maybePop` only.
+- **`RouteRenamer` owns the `circuits` rename write**, because two screens make it (the route list's
+  dialog, and the update screen's "Save name" on back). The rules accept *exactly* `round` +
+  `round_source` — adding `updated_at` or dropping the source earns a bare `permission-denied`.
+- **`RouteName.maxLength` mirrors `firestore.rules`** (`size() <= 80`) the way `DepotLocator.addressKey`
+  mirrors `firestore_paths.address_key`. Over-length names come back as a bare `permission-denied`, which
+  reads as a sign-in failure, so they are caught client-side before the write.
+- **`manual_order` is "the stops this run keeps, in order" — a subset, not a permutation.** Removing a
+  stop on the review screen means leaving its id out of that list; `_apply_manual_order` in
+  `confirm_run_sheet_upload.py` marks the rest `excluded` (soft, like `removed_at` on a driver) and
+  `get_stops_by_run` filters them. It used to require an exact permutation and discard anything else
+  wholesale, which made removal unexpressible — the owner could see a duplicate row or a mangled
+  address and could only confirm it or discard the whole sheet. It is still sent **only** when the owner
+  actually edited something (`_stopsEdited`): an untouched review must not re-assert the pipeline's own
+  sequence as though a person had chosen it. Nothing is written until Confirm, so `_removed` is the only
+  record a removal happened — which is why the header panel shows it rather than a bare count, and why
+  `_resetOrder` deliberately leaves removals alone (its label says *order*).
+
+- **Reordering uses `onReorderItem`, not the deprecated `onReorder`.** It already compensates for the
+  lifted item, so the classic `if (newIndex > oldIndex) newIndex -= 1` fixup must **not** be repeated.
+- A `RunStop` without coordinates is dropped at parse time (`RunStop.fromDoc` returns null) so no
+  downstream consumer needs null checks; the review screen calls the omission out explicitly. The backend
+  now *keeps* stops it could not locate (`precision: "none"`, placed last). So the review screen appends
+  their ids (`_unlocatedIds`) to `manual_order`: leaving them out would tell `confirm_run_sheet_upload`
+  to remove them.
+- **`DeliveryEstimate` mirrors the backend's `domain/travel_time.py`**, the way `DepotLocator.addressKey`
+  mirrors `address_key`. A leg costs: a driver-measured `learned_legs` time (used as it stands - it is
+  already that driver), else Google's `road_legs` time × `speed_factor`, else straight line × 1.35 at
+  30 km/h × `speed_factor`. Each stop costs what `dwell_by_key` says, else the business's
+  `default_dwell_s`. `EstimateInputs.fromRun` reads all of that off the run document in one place, so a
+  dragged order re-estimates to the figures the backend wrote. `test/delivery_estimate_test.dart` pins the numbers the Python produces;
+  change both sides together. The review screen re-estimates on every build, so dragging updates the
+  total, and each `StopCard` shows its arrival offset. It is an offset, not a clock time: nothing records
+  when the van leaves.
+- `RunStop.precision` (`PinPrecision`) comes from the backend geocoder. Only `street` and `area` show a
+  warning on the card. An unknown value parses as `exact`.
+- `milkTotals()` must stay independent of stop order — reordering a route cannot change what's loaded on
+  the van, and a test pins that.
+- Product lines render through `StopItem.label` everywhere; a quantity formatted two ways is a support call.
+- **A driver invitation has no link and no token.** The `driver_invitations/{email}` document *is* the
+  credential — `before_sign_in_fn.py` authorises the invited address on its next Google sign-in whether
+  or not the email arrived, so an owner can invite someone and tell them out of band. Expiry is therefore
+  `expires_at` on that document and nothing else, and "resend" means "renew", i.e. rewrite the document
+  with a later deadline. Don't add a link; there is nothing for it to carry.
+- **Owners and drivers are invited through the same flow**, distinguished by `driver_invitations.role`
+  (`owner`/`rider`). Absent means `rider` — every invitation written before this lacks the field. Read it
+  through `InvitationRole.parse`, which resolves anything unrecognised **down** to `rider`, mirroring
+  `Invitation.granted_role()` in the backend; a typo must cost access, never grant it. `role.wire` is the
+  backend's spelling (`rider`) and `role.label` is the app's (`Driver`), the same split as `AuthRole.driver`.
+  An owner invite gets a confirm step and a badge on every roster row, because it is a much larger grant
+  than a driver invite and a dropdown does not say so.
+- **`DriverInviter` owns every `driver_invitations` write the client still makes**, for the same reason `RouteRenamer` owns the
+  `circuits` rename: the rules accept exact shapes. An invite is the whole document with `accepted_at`
+  null; a rename is **exactly** `driver_name` + `driver_name_source` and is a separate write precisely so
+  it can apply to a driver who has already accepted. Routing a rename through the invite shape blanks
+  their `accepted_at` and drops them off the roster.
+- **Invitations are written merged (`SetOptions(merge: true)`), never whole-document.** The rate-limit
+  counters on the document are server-owned (`backfill-invite-counters`), and the rules refuse any write
+  that sets, changes or drops one. A whole-document resend would drop them. `DriverInvitation.canResend` /
+  `resendAvailableAt` mirror the rules' `spacingOk` (1 day) and `windowOk` (14 in a live 14-day window).
+- **A resend aimed at an accepted driver would un-accept them.** `isInvite()` only constrains the
+  *incoming* document, so the rules also check `resource.data.accepted_at == null` on the update path, and
+  `DriverInvitation.canResend` disables the menu item. Both halves matter — the driver would keep their
+  minted `role: rider` claim and keep driving while the owner's list said they had never signed in.
+- **The roster has four states, not two.** `pending` / `expired` / `accepted` / `removed`. The old
+  two-query split on `accepted_at` reported an expired invitation as still waiting, hiding the one row
+  that needs action. Firestore can't express "expired" as a query that stays true as time passes, so
+  `AuthState.invitations()` streams the collection whole and `DriverInvitation` derives state from an
+  injected `now`. `removed` is the exception — it is a stored field, not derived — and it is checked
+  **first**, ahead of expiry, mirroring `handle_sign_in.resolve_sign_in`: a driver who was removed and
+  whose invitation then lapsed reads as removed, because "expired" offers a resend and a resend would
+  quietly re-hire them. Removed rows render in their own section, not sorted to the bottom of the
+  live one.
+- **`DriverInvitation.status` uses strictly-after**, mirroring `Invitation.is_expired` in
+  `ports/invitation_repository.py` (`now > expires_at`). A row exactly on its deadline is still live
+  server-side, and a test pins that on both sides.
+- **`InviteForm.maxNameLength` and `InvitationTtl.min`/`max` mirror `firestore.rules`**, the way
+  `RouteName.maxLength` does. Over-range values come back as a bare `permission-denied`, which reads as a
+  sign-in failure.
+- **A driver's name follows the same precedence rule as a route's name**: what the owner typed beats what
+  Google supplied at sign-in, beats a guess from the email local-part. `driver_name_source == 'owner'` is
+  what stops `handle_sign_in.resolve_driver_name` overwriting it on the next sign-in. Use
+  `DriverInvitation.nameFromEmail` for the fallback rather than re-deriving it — a driver spelled two ways
+  across two screens reads as two drivers.
+- **Removing a driver is `DriverAccessApi`, not a Firestore write, and nothing is deleted.** It used to
+  be `_collection.doc(email).delete()`, which was half a removal in both directions: an accepted driver
+  kept the `role: rider` claim minted at sign-in and carried on delivering, and the uid that document
+  carries is what `delivery_run.rider_id` and `route_assignments.driver_uid` point at, so deleting it
+  turned every round they ever drove into a dangling id. Removal now sets `removed_at` *and* disables
+  the Firebase account, which are two systems and therefore a Cloud Function
+  (`driver-access` → `manage_driver_access.py`) — a mobile client cannot hold the Admin SDK, and only
+  the account half stops a driver who is already signed in, because they are renewing a refresh token
+  rather than signing in again. `firestore.rules` refuses a `driver_invitations` delete outright and
+  refuses a client write that sets `removed_at`, so neither half can regress quietly. Restore is the
+  same call with `action: restore`, and it is the *only* way back — a removed driver cannot sign in to
+  ask. Worst case they keep working for up to an hour, the remaining life of the ID token in their
+  hand; the confirm dialog says so rather than promising instant.
+- **`user_profiles/{uid}` is placeholder data and client-owned.** Nothing in the delivery pipeline reads
+  name/age/gender/phone; the collection exists so an account is more than what Google supplies. Written by
+  the client directly for the same reason `stop_instructions.owner_instructions` is — there is nothing for
+  a Cloud Function to recompute about a person's own description of themselves.
+- **`OwnerProfile.toMap()` omits unset fields; it must never write null.** The rules validate
+  `'age' in request.resource.data`, so a null age is a *present* key failing `is int` and the whole write
+  is refused. `AuthState.saveProfile` therefore `set()`s a whole-document replace, not a merge — omitting
+  a key is what lets clearing a field remove it. Bounds (`maxNameLength`, `minAge`/`maxAge`,
+  `maxPhoneLength`) mirror `firestore.rules`, same as `RouteName.maxLength`.
+- **`ProfileGender` stores a snake_case `wire` value, never the enum index**, and `parse` returns null for
+  anything it doesn't recognise so a newer build's document can't break an older one's screen.
+- `OwnerProfileScreen` takes its starting values as a constructor argument rather than streaming them —
+  a live stream would rewrite fields under the cursor while the owner types. Its dirty test is
+  `OwnerProfile.differsFrom` on parsed fields, **never** raw controller text, and `canPop` is refreshed by
+  a `ListenableBuilder` over `Listenable.merge([...controllers])` because one controller isn't enough here.
+- **A `SnackBar` with an action must set `persist: false`** (and a `duration`). In current Flutter (3.47 here),
+  `persist` defaults to true whenever an action is present, so an "Undo" snackbar otherwise stays on
+  screen until tapped.
+- Debug tracing goes through `AppLog.auth` / `AppLog.owner` (`lib/util/app_log.dart`), which compiles away
+  in release builds. Leave the calls in rather than adding and stripping them. Filter with
+  `adb logcat | grep "BlueDot/"`.
+- Fields are logged as `key=value` maps, and secrets are logged by *presence* (`hasIdToken: true`), never
+  by value.
+- **Feature folders.** Most of `lib/` is split by layer (`screens/`, `services/`, `models/`, `widgets/`).
+  Notifications and settings are each one folder instead, because both keep growing and their pieces
+  belong together:
+  - **`lib/notifications/`:**
+    - `push_notifications.dart`: registration, foreground display, and the background handler.
+    - `notification_channels.dart`: every channel, and the Blue Dot icon and color.
+    - `live_run_notification.dart`: the owner's live run.
+    - `presence_notification.dart`: the driver's own "You're online".
+    - A new kind of notification gets its own file there, plus a channel in `NotificationChannels`.
+  - **`lib/settings/`:**
+    - `settings_screen.dart`: the screen.
+    - `cards/`: one widget per setting; `save_setting.dart` is the shared write-and-report helper.
+    - `settings_store.dart`: every settings read and write. Business settings live in
+      `app_settings/{ownerUid}` and personal ones in `user_settings/{uid}`. Settings don't go on
+      `AuthState`, which is sign-in only.
+- **The driver side** (`lib/driver/`, shell `DriverShell`):
+  - **Data.** `DriverDataBuilder` streams three queries once for both tabs: the driver's runs
+    (`delivery_run`, `rider_id == uid`, status `sequenced`), the business's `circuits` (route names) and
+    its whole `route_assignments`. The whole schedule matters because a colleague's one-day cover takes a
+    day off you. The rules let a driver read exactly these.
+  - **Tabs.** `DriverSchedule` (pure, tested in `test/driver_schedule_test.dart`) builds Upcoming / Today /
+    Past.
+    - Runs are placed by `RunListing.phase`.
+    - **Bookings** (a day they cover, or a route they take over later) show until that day's run sheet
+      exists.
+    - Start times come from the schedule for the run's own day, as on the owner's Runs tab.
+  - **Home** (`DriverHomeScreen`): the run **live now** (started, not finished), else **next up**, with a
+    countdown on the day; then the next few. Chosen by `DriverSchedule.home`, which is tested.
+  - **Every card opens** (`openDriverCard`). A run opens `DriverRunScreen`. A booking, or a route on the
+    Routes tab, opens `DriverRouteScreen`: the route as planned, built from `circuits.stops_summary` with
+    pins from the `addresses` geocode cache. Both are readable by a driver, so a route can be opened
+    before its run sheet exists. A route assigned after its only run sheet was already past has no run
+    the driver can open; that is correct, because past runs keep their driver.
+  - **Driving** (`lib/driver/driving/`). Opened by Home's "Drive"/"Start run" and the run screen's button,
+    for today's unfinished run.
+    - **The map** is `flutter_map` with `BasemapLayer` (the app's chosen style), the road still to drive
+      (`road_legs` from the last delivered stop on), the stop pins, and the van at the phone's position
+      (`geolocator`). It follows the van until dragged; "Follow me" resumes. The screen stays awake
+      (`wakelock_plus`).
+    - **The flow:** Start run (`driver_started_at`), then the current stop. **Arrived** shows only within
+      60 m plus GPS accuracy (`DrivingLogic.isNear`), never from far away. The exception is a phone with
+      no location (off, or permission refused), so the driver is never stuck. That writes
+      `arrived_at`. Then **Take photo & deliver** (camera via `image_picker`, uploaded to
+      `InfraConfig.podPhotosBucket` at `{ownerUid}/{runId}/{stopId}.jpg`) or deliver without one. This
+      writes `status`, `delivered_at`, `pod_photo_url` and `delivered_lat`/`lng`/`accuracy_m`, all through
+      `DeliveryWriter`. End run asks first if stops are left.
+    - **Photos are evidence** (`PhotoStamp`, the `image` package, in a background isolate):
+      - **Smaller:** at most 1280 px on the long side, JPEG quality 70, about 150-300 KB.
+      - **Stamped:** a dark bar with the date and time taken, and run / stop / customer, burned into the
+        pixels in plain ASCII (the bitmap font can't draw accents or "·").
+      - **One folder per run** (`{ownerUid}/{runId}/{stopId}.jpg`, with `run_id`/`stop_id` metadata).
+      - **The owner** sees them on the run: "Delivery photos (n)" opens `RunPhotosScreen` (a grid in route
+        order; tap to zoom). The header also shows started / finished / total time.
+    - **Voice** (`VoiceGuide`, `flutter_tts`, the phone's own engine): the start line, "Next: … 600 metres
+      north-east" once per stop, then "Approaching …" with the items and instructions within 150 m. The text
+      and thresholds are in `DrivingLogic` (tested in `test/driving_logic_test.dart`). Mute on the map or in
+      Settings → Voice prompts (`user_settings.voice_prompts`). The voice button on the map (next to
+      "Follow me") switches it on or off; turning it on says the next stop at once.
+    - **Preview maps vs the driving map.** The run and route screens show the plan. Their "Drive" /
+      "Start" button over the map opens the driving screen, the only map with the van, the voice and
+      Arrived.
+    - **Turn-by-turn is in the app** (`turn_by_turn.dart`, `routes_client.dart`). Nothing hands off to Google
+      Maps; the Android chooser that offered Uber Eats is gone, and so is `url_launcher`.
+      - **The route:** for the current stop, the app asks the Routes API (`computeRoutes`, TRAFFIC_UNAWARE,
+        with navigation instructions) for the road from the van, using the app key (`GOOGLE_MAP_TILES_KEY`,
+        which `maps.tf` also allows for `routes.googleapis.com`) with the same `X-Android-*` headers as the
+        tiles.
+      - **On the map:** the line is drawn bold, and a banner shows the next turn's arrow, distance and
+        instruction.
+      - **The voice:** "Continue for …" on a long stretch, "In 300 metres, turn left…", then the turn
+        itself. That last one is urgent and jumps the queue.
+      - **Re-routing** happens after 2 fixes more than 50 m off the line, at most every 10 s.
+      - **Navigation mode is on from the start** (there is no Directions button; the failure banner's Retry
+        asks again):
+        - the map turns heading-up (`rotate(-heading)`, the heading taken only while moving > 1.5 m/s);
+        - it zooms to 17.5, with the van low on the screen (`move(..., offset:)`);
+        - markers counter-rotate (`rotate: true`) to stay upright;
+        - the stop panel shrinks to a bar: name, distance left, minutes, arrival time
+          (`TurnByTurn.remainingMeters`/`remainingTime`). Tap it for the details.
+      - **Leaving navigation mode.** It ends by itself near the stop, where the full panel comes back for
+        Arrived, and resumes for the next stop after a delivery.
+      - **Nothing to dismiss.** The turn banner can't be closed, as in Google Maps.
+      - **No top bar while driving.** A tap on the map shows it (back, run name, End run) and another hides it; the
+        map sits below the status bar (`SafeArea`) so its credits stay visible.
+      - **A copied run isn't labelled** on the driving screen. The run still carries `copied_from_date`
+        for the owner.
+      - **Voice on/off lives on the map only,** not in the top bar.
+      - The logic is pure and tested (`test/turn_by_turn_test.dart`).
+    - **The voice queues** (`VoiceGuide`): lines are said in order, and `urgent` lines clear the queue.
+    - **Back asks first** on a run under way (`PopScope`, decided at the press from the latest run):
+      "Leave the run?" with Stay / Leave / End run. Leave writes `driver_left_at` and the owners are told
+      (notify-run); reopening the run writes `driver_resumed_at` ("Ana is back on ..."). A run not
+      started or finished just closes. Owners see "Left at 6:40 am" (`TimingKind.left`) meanwhile.
+    - **Heartbeat and timing.** While a started run is open it beats `run_live` every minute
+      (`RunHeartbeat`), and the panel shows the same `RunTimingPill` as the owner sees, with "n of N
+      delivered". It is given the schedule's `startTime`/`endTime` by whoever opens it.
+    - **Foreground only.** Location and voice stop when the screen is off or another app is in front. A
+      foreground service with background location is the next step.
+  - **Load tab** (`driver_load_screen.dart`): what to put on the truck, in place of reading the paper sheet.
+    Today's unfinished runs (chips if several), else the next run, so it can be loaded the night before.
+    - **The sheet** (`LoadSheetView`, `lib/widgets/load_sheet_view.dart`, shared with the owner): every
+      product on the run's stops totalled by code (unlocated stops included: they still need milk), plus the
+      changes, heaviest first. Pure and tested: `LoadSheet` (`lib/models/load_sheet.dart`,
+      `test/load_sheet_test.dart`).
+    - **Changes** are records in `delivery_run/{runId}/load_changes/{id}`, never edited, so the list is the
+      history: the owner's `adjust` (+ extra / − take off, any product, including one not on the sheet,
+      coded `LoadChange.codeFor(name)`) and the driver's `short` (how many missing). A note is optional.
+      The backend's notify-load-change tells the other side (channel `load`). Writes go through `LoadWriter`.
+    - **Ticks:** the driver ticks each product as it goes on. Stored in
+      `delivery_run/{runId}/load_state/checklist` as code -> the quantity ticked, so if the owner changes a
+      product after it was ticked, it reads unticked again. The owner sees "Driver has loaded 3 of 7".
+    - **The owner** opens the same sheet from the run screen's "Load sheet" button (`RunLoadScreen`), with
+      "Add or take off". A finished run's sheet is read-only.
+  - **Start this route today** (`route_starter.dart`): on the route view, a today booking and Home's next-up
+    card, when `DriverSchedule.scheduledToday`. It writes `run_starts/{id}` and waits for the backend's
+    `start-route-run` to answer with a run (today's sheet, or a copy of the last one), then opens the
+    driving screen.
+  - **Tap a stop** on any driver map or list for `showStopDetails` (`lib/widgets/stop_details_sheet.dart`):
+    name, address, items, instructions, phone, and the delivery time and photo once delivered. The route
+    view reads items and instructions from the route card.
+  - **Swipe down for the whole map.** The driver's run and route screens and the owner's run screen use
+    `MapWithSheet` (`lib/widgets/map_with_sheet.dart`): the map fills the screen, the list sits in a sheet
+    that snaps to map only, half and most of the screen. The owner's `RouteMapScreen` sheet snaps the same
+    way.
+  - **A run** (`DriverRunScreen`) is read-only: the map, a summary, and the stops with their delivery
+    times. A driven run shows its history:
+    - Started: `RunListing.started`, the earlier of the driver's Start (`driver_started_at`) and the
+      first delivery.
+    - Finished: `finished`, all delivered, or the driver's End.
+    - Total time, the estimate, and the first and last delivery.
+  - **Who can open which run.** A driver can only open runs carrying their uid. The backend re-stamps
+    `rider_id` on a route's open runs whenever an assignment is written (`assign_route_runs.py`), so a
+    route assigned after its sheet was confirmed still reaches its driver.
+  - **Times and vehicle.** Each run and route shows its window (`formatWindow`: "5:00 am - 7:44 am") and
+    the vehicle the owner assigned them (`vehicles`, `assigned_driver_uid == uid`, streamed by
+    `DriverDataBuilder`). A past run shows its history instead of the vehicle.
+  - **Settings** (`lib/settings/driver_settings_screen.dart`, from the driver's menu): "Remind me
+    before a run", on or off and how long before (`ReminderCard`, `user_settings`). The backend's
+    `run-alerts` sends the reminders on channel `reminders`.
+  - **Notifications off.** `NotificationPermissionBanner` (in `lib/notifications/`) shows across the top
+    while they're off. It doesn't block the app.
+  - **No background permission.** Android shows a push with the app closed by itself; only the
+    notification permission matters.
+- **Crash reporting** (`lib/observability/crash_reporting.dart`, Firebase Crashlytics):
+  - **Release builds only.** It is off in debug, which keeps its own red screens and console. Started in
+    `main()` after `Firebase.initializeApp`.
+  - **What gets reported:**
+    - uncaught errors, as crashes;
+    - every `AppLog.<area>.error(...)`, as a non-fatal report, with the message as the reason and the
+      fields attached. That call prints nothing in release, so Crashlytics is where those errors go.
+  - **Who it happened to:** reports carry the account uid and role (`CrashReporting.identify` in
+    `AuthGate`, cleared on sign-out), **never the email**. Keep personal details out of `AppLog` error
+    fields too.
+  - **Gradle.** The Crashlytics Gradle plugin is in `android/settings.gradle.kts` and
+    `android/app/build.gradle.kts`.
+  - **Proving it works.** Build with `--dart-define=CRASH_TEST=true` in profile or release. The owner's
+    menu then offers "Send a test crash".
+  - **Firebase project.** The backend's `firebase_apps.tf` owns the app's Firebase registration and
+    outputs its `google-services.json`.
+- **Push notifications** (`lib/notifications/`):
+  - **Registration.** `AuthGate` registers the phone on sign-in (permission prompt on Android 13+, token
+    saved to `user_devices/{uid}/tokens/{token}`). `AuthState.signOut` unregisters it *before* signing
+    out, while the rules still know who is asking. The backend's `notify-assignment` sends to these tokens.
+  - **Brand look.** The resource names `ic_stat_bluedot` (monochrome status-bar icon, `res/drawable`),
+    `bluedot_large`, `@color/bluedot_brand` and channel id `assignments` are a contract with
+    `dmm-delivery-app/src/dmm_delivery/adapters/fcm_user_push.py` and the manifest's FCM defaults. Don't
+    rename them on one side only.
+  - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished),
+    `live_runs` (low importance, silent), `drivers` (owners: a driver opened the app), `load` (the load
+    sheet changed: owner -> driver, or a driver's shortage -> owners) and `status`
+    (no longer sent; was the driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
+  - **Online means the app is open; there is no switch** (`lib/driver/driver_presence.dart`).
+    `DriverPresenceTracker` wraps the driver shell and writes `driver_presence/{uid}` (`owner_uid`, `online`,
+    `changed_at` = server time; the rules allow only the driver themselves): online as the app opens or
+    comes back to the front, offline when it is left (hidden / paused / detached) and on sign-out.
+    - **Owners see it** on Home ("1 of 2 drivers online").
+    - **Owners are told only if they asked, and only on opening the app after 30+ minutes away**
+      (notify-presence); leaving is never sent. Both switches are off by default: Settings → "Drivers
+      opening the app" (`driver_presence_alerts`, every driver) and the driver's page → "Tell me when …
+      opens the app" (`presence_alert_drivers`, uids). Both live in `SettingsStore`.
+    - The old Online switch and the driver's own ongoing "You're online" are gone;
+      `PresenceNotification.clear()` removes one left in the shade by an earlier build.
+    - A phone that dies without leaving the app stays "online" until it is next opened and left.
+  - **The live run notification** is sent as data, and the app draws it (`LiveRunNotification`). It is ongoing,
+    shows a progress bar and a chronometer from the run's start, uses the run id as its tag (so each run
+    updates in place), and times out 30 minutes after its last update so it can't get stuck. When the app
+    is closed, `pushBackgroundHandler` draws it (registered in `main()`; it runs in its own isolate, so it
+    initializes the plugin itself). Sign-out clears every notification.
+  - **While the app is open**, Android does not draw a push. `PushNotifications._showInForeground` draws it through
+    `flutter_local_notifications`, which needs core library desugaring (`android/app/build.gradle.kts`).
+  - **The FlutterFire packages move together.** Adding `firebase_messaging` pulled `firebase_core` ahead of
+    `firebase_auth`, and the APK stopped compiling (`customAuthDomain` not found). Upgrade them as a
+    set, and run `flutter clean` if the build then can't find a plugin class.
+
+## UI
+
+Design tokens live in `lib/theme/app_colors.dart` / `app_theme.dart`; shared primitives in `lib/widgets/`
+(`PrimaryButton`, `PillBadge`, `SectionLabel`, `StatTile`, `SurfaceCard`, `StageProgressBar`, `StopCard`,
+`RoutePreviewMap`, `StopInstructionsSheet`, `WeeklyBarChart`). Pull styling from the theme rather than
+hardcoding colors.
+
+`prototypeAssets/` holds the original static HTML mockups and is still the reference for the
+customer/rider screens. **The Owner prototypes are not in this repo** — comments cite `owner-home.html`,
+`owner-maps.html`, `owner-rider.html` and `owner-menu.html`, but those files were never committed here
+(plan.md points at an external prototype directory). Treat plan.md plus the existing Dart as the spec for
+Owner screens.
+
+`RoutePreviewMap` is deliberately shared between the pre-confirm review screen and `RouteMapScreen`: the
+sequence an owner approves and the one they look up later must be the same picture, depot legs included.
+
+Tapping a stop in either screen's list calls its pin out on that shared map — `StopHighlight` carries the
+`RunStop.id` (never an index, which a drag would invalidate) plus a tick, because tapping the same card
+twice has to blink twice or the second tap reads as not registering. The pin pulses three times, is drawn
+above every other marker including the depot, and stays filled afterwards; the map only pans when the pin
+is off screen, for the same reason `initialCameraFit` never re-fits.
+
+`RoutePreviewMap` draws each leg along its road shape from the run's `road_legs` (`RoadLegs.fromRun`, decoded
+with `decodePolyline` at precision 5, as the Routes API returns). Legs are keyed by address pair, not
+position, so dragging a stop keeps the road shape of every leg that still exists, and only the new legs are
+drawn straight until confirm redraws them. Don't reuse the decoder for the rider map: its shape is
+precision 6. Time estimates merge `{...roadLegs.seconds, ...learnedLegs}`, the same precedence as the
+backend. The route screen reads just the times with `roadSecondsFromRun`, which skips decoding the shapes.
+
+**Basemaps come in three styles** (`MapStyle`, one app-wide `ValueNotifier`, picked with `MapStyleButton` in
+the map controls):
+- **Simple:** CARTO Positron.
+- **Detailed:** Google road map, with businesses, buildings and house numbers.
+- **Satellite:** Google imagery with road labels.
+
+Every map draws `BasemapLayer` + `BasemapAttribution` (`lib/widgets/basemap*.dart`); never a hand-rolled
+`TileLayer`. The Google styles use the Map Tiles API (`GoogleMapTiles`), which requires a session per style
+(cached until an hour before expiry) and a key in `GOOGLE_MAP_TILES_KEY`. Without that key only Simple is
+offered.
+
+The key is Android-restricted: every request sends `X-Android-Package`/`X-Android-Cert`
+(`MapConfig.googleMapTilesHeaders`, the committed debug keystore's SHA-1). A release keystore needs its SHA-1
+added in the backend's `maps.tf` *and* passed as `GOOGLE_MAP_TILES_ANDROID_CERT`.
+
+Google's terms shape the code:
+- **No caching:** these tile layers use `DisabledMapCachingProvider`, because flutter_map caches to disk
+  by default.
+- **Attribution:** the Google Maps logo (official assets in `assets/google_maps/`) plus the per-viewport
+  copyright line, never covered. That's why `RouteMapScreen` puts the credits at the top
+  (`attributionAtTop`), where its stop sheet can't cover them.
+- **Fallback:** a Google style that fails to start falls back to Simple rather than a blank map.
+
+`RoutePreviewMap` draws its own controls (zoom in/out, show whole route, and enlarge when the host passes
+`onToggleExpanded` — only the review screen does). Pins come in three tiers by zoom (`_PinTier`): dots
+below 13, compact numbered badges below 14.5, full pins above. A whole round fits at about zoom 12, where
+full pins pile into unreadable stacks. The tier is the only zoom-driven state, so a pinch doesn't rebuild
+every marker on every frame. The called-out pin is always full size. Rotation is disabled, and tiles
+request `@2x` on high-density screens (`retinaMode`).
+
+**Scheduling is one sheet, `showScheduleRunSheet`** (`lib/widgets/schedule_run_sheet.dart`). The Routes tab
+opens it with the route fixed (long-press, then the person icon); the driver page opens it with the driver
+fixed ("Schedule a run"). It sets the date, a **start** and a **finish** time, and **every day from then** vs **this day only**.
+The finish starts as start + the route's estimate (`addToStartTime`). The owner sets it to whatever
+they expect, and the sheet warns when the window is shorter than the estimate. The expected time comes from
+`RouteEstimates.forRoute`, which reads the latest run's `estimated_total_s`. It writes one
+`route_assignments` row through `RouteAssigner` (`start_time`, `end_time`, `one_day`). The one-day and start-time rules
+live in `RouteAssignment.activeAt`, which mirrors the backend's `domain/route_assignment.py`; keep them in
+step. Times are stored "HH:MM" and shown through `lib/models/run_time.dart`.
+
+Both stop lists have a **search** action (`searchForStop` in `lib/widgets/stop_search_delegate.dart`, matching
+logic in `lib/models/stop_search.dart`). Every word typed must appear somewhere on the stop: name, address,
+order number, docket, phone or product. Results whose name starts with the query rank first, then route
+order. Picking a result highlights the pin on both screens. The review screen then scrolls its list to the
+card (the list is built lazily, so it jumps to a rough position first and then fine-tunes); the route
+screen opens the stop's sheet.
+
+The `Inter` variable font is registered once in `pubspec.yaml` at several weights pointing at the same
+file; select weights via `TextStyle(fontWeight: ...)`, not separate family names.
+
+## Dead code worth knowing about
+
+- `lib/screens/customer/*` (Home/Tracking/Receipt) and the customer half of `AppState` are **unreachable**
+  — the Customer/Rider toggle was removed when the Owner shell landed.
+- `lib/screens/owner/run_sheet_diff_screen.dart` is unreferenced; `RunSheetReviewScreen` replaced it.
+- `AppState` (`lib/state/app_state.dart`) is used only by the unreachable customer screens. The driver mock
+  tabs it fed (Orders / Active / Earnings) were deleted when `DriverShell` replaced them.
+
+Don't extend these; if a task touches one, check whether the real Owner/driver path is what's actually wanted.

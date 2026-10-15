@@ -1,5 +1,15 @@
 # Blue Dot — plan
 
+Historical design record (not current implementation guidance):
+  This file moved from plan.md and preserves earlier decisions and observations.
+  Current features are described in .claude/architecture.md; current contracts
+  are in .claude/technical-lld.md and their referenced source. Shared instructions
+  belong in AGENTS.md, with routing status in .claude/README.md.
+  The mock Maps board, absent driver UI, absent scheduling, three invitation
+  states, global invitation settings and non-revoking removal below describe
+  earlier versions. Do not implement or authorize work from those old claims.
+  Old deployment/test/security observations are not current verified state.
+
 Working notes for both roles. Screens are ports of the prototypes in
 `/Users/dolphin/Downloads/bluedot-prototype`.
 

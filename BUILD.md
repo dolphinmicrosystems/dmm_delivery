@@ -4,7 +4,7 @@ This covers the four ways this app actually gets built, and specifically how
 `lib/config/infra_config.dart` and `lib/firebase_options.dart` (the two
 files that point this app at a real GCP/Firebase project) get kept in sync.
 For everyday Flutter commands (`flutter test`, `dart format`, architecture)
-see `CLAUDE.md`. This file is about *which environment* a build talks to and
+see `AGENTS.md` and `.claude/technical-lld.md`. This file is about *which environment* a build talks to and
 *how that gets there*.
 
 ## Decision table
@@ -18,7 +18,9 @@ see `CLAUDE.md`. This file is about *which environment* a build talks to and
 
 ## Prerequisites
 
-- Flutter SDK (`flutter --version` should work)
+- Flutter 3.44+ with Dart 3.12+ (`flutter --version` should work). The
+  committed dependencies require these minimums; Flutter 3.41 / Dart 3.11
+  cannot resolve them. Verified locally with Flutter 3.47.7 / Dart 3.13.5.
 - For cases 2-4: [`gcloud`](https://cloud.google.com/sdk/docs/install), authenticated (`gcloud auth login`) as an account with at least read access on the target GCP project
 - For case 3 only: FlutterFire CLI + Firebase CLI:
   ```
@@ -45,7 +47,7 @@ flutter run
 
 No GCP credentials needed, no network calls to Google Cloud, fully
 offline-capable. This is deliberately *not* wired into any build hook (see
-`CLAUDE.md`/prior design discussion for why) - it's the fast iteration loop
+`.claude/technical-lld.md`/prior design discussion for why) - it's the fast iteration loop
 and should stay that way.
 
 ---

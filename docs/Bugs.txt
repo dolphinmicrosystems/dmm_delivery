@@ -1,0 +1,13 @@
+- Current day run is only visible at driver
+- New sheet upload logic to be revisied
+- Online  not an optional - forced offline is mentioned to owner
+- Routes need hamburger instead of click and open
+- Contradiction Daily run has to be greater than current time
+- Daily run will be in Drivers' Upcoming tab
+- Label on Upcoming list should be tommorrow
+- Time at each stop needs custom
+- Darker Mode navigation
+- Google Maps cost
+- Route Not for Your zone, need sheet flexibility and gaurdrails
+- Docs folder in each of 2 projects for Skiils and agents; code maintainability
+- Home screen of Owner need fixation and smaller tiles
