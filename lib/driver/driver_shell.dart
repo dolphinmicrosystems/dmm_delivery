@@ -5,13 +5,14 @@ import '../state/auth_state.dart';
 import '../widgets/blue_dot_app_bar.dart';
 import 'driver_data.dart';
 import 'driver_home_screen.dart';
+import 'driver_load_screen.dart';
 import 'driver_menu_drawer.dart';
 import 'driver_presence.dart';
 import 'driver_routes_screen.dart';
 import 'driver_runs_screen.dart';
 
-/// Everything a driver sees once signed in: three tabs - Home (the run live now, or the next one), Runs (Upcoming /
-/// Today / Past) and Routes.
+/// Everything a driver sees once signed in: four tabs - Home (the run live now, or the next one), Runs (Upcoming /
+/// Today / Past), Load (what to put on the truck) and Routes.
 ///
 /// Replaces the original prototype's mock tabs (Orders / Active / Earnings),
 /// which showed made-up jobs and earnings to real drivers. All three tabs read the
@@ -47,6 +48,7 @@ class _DriverShellState extends State<DriverShell> {
                 children: [
                   DriverHomeScreen(authState: widget.authState, data: data),
                   DriverRunsScreen(authState: widget.authState, data: data),
+                  DriverLoadScreen(authState: widget.authState, data: data),
                   DriverRoutesScreen(authState: widget.authState, data: data),
                 ],
               ),
@@ -60,6 +62,7 @@ class _DriverShellState extends State<DriverShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
           NavigationDestination(icon: Icon(Icons.local_shipping_outlined), label: 'Runs'),
+          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'Load'),
           NavigationDestination(icon: Icon(Icons.alt_route_rounded), label: 'Routes'),
         ],
       ),

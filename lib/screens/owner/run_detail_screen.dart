@@ -17,6 +17,7 @@ import '../../widgets/route_preview_map.dart';
 import '../../widgets/run_timing_pill.dart';
 import '../../widgets/stop_instructions_sheet.dart';
 import 'owner_run_data.dart';
+import 'run_load_screen.dart';
 import 'run_photos_screen.dart';
 
 /// One run, live: the route on the map with delivered stops ticked off, how
@@ -127,6 +128,17 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                                   builder: (_) => RunPhotosScreen(routeName: widget.routeName, stops: docs),
                                 ),
                               ),
+                              onLoad: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => RunLoadScreen(
+                                    authState: widget.authState,
+                                    runId: widget.runId,
+                                    routeName: widget.routeName,
+                                    finished: listing.finished != null,
+                                    driverAssigned: listing.riderId != null,
+                                  ),
+                                ),
+                              ),
                             );
                           }
                           final doc = docs[index - 1];
@@ -227,6 +239,7 @@ class _Header extends StatelessWidget {
     this.endTime,
     this.photoCount = 0,
     this.onPhotos,
+    this.onLoad,
   });
 
   final String ownerUid;
@@ -238,6 +251,9 @@ class _Header extends StatelessWidget {
   /// Stops with a delivery photo, and how to open them.
   final int photoCount;
   final VoidCallback? onPhotos;
+
+  /// Opens the run's load sheet: what goes on the truck, and changing it.
+  final VoidCallback? onLoad;
 
   @override
   Widget build(BuildContext context) {
@@ -325,14 +341,25 @@ class _Header extends StatelessWidget {
               ),
             ),
           ],
-          if (photoCount > 0) ...[
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: onPhotos,
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: Text('Delivery photos ($photoCount)'),
-            ),
-          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (onLoad != null)
+                OutlinedButton.icon(
+                  onPressed: onLoad,
+                  icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                  label: const Text('Load sheet'),
+                ),
+              if (photoCount > 0)
+                OutlinedButton.icon(
+                  onPressed: onPhotos,
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  label: Text('Delivery photos ($photoCount)'),
+                ),
+            ],
+          ),
           const SizedBox(height: 8),
           // Said plainly rather than drawn: the old board placed a made-up
           // van on a made-up route.

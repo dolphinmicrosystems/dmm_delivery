@@ -51,12 +51,14 @@ class OwnerHomeScreen extends StatelessWidget {
     AppLog.owner('OwnerHomeScreen build', {'uid': authState.user?.uid, 'role': authState.role?.name});
     final ownerUid = authState.ownerUid;
     if (ownerUid == null) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     return OwnerRunDataBuilder(
       authState: authState,
       ownerUid: ownerUid,
+      // Home shows today and tomorrow only, so it reads only those runs.
+      onlyDays: [today, today.add(const Duration(days: 1))],
       builder: (context, data) {
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
         return RunLiveBuilder(
           ownerUid: ownerUid,
           runIds: [

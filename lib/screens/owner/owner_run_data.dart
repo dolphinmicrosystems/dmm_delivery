@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -57,6 +59,7 @@ class OwnerRunDataBuilder extends StatelessWidget {
     required this.ownerUid,
     required this.builder,
     this.loading = const Center(child: CircularProgressIndicator()),
+    this.onlyDays,
   });
 
   final AuthState authState;
@@ -64,17 +67,30 @@ class OwnerRunDataBuilder extends StatelessWidget {
   final Widget Function(BuildContext context, OwnerRunData data) builder;
   final Widget loading;
 
+  /// Just the runs dated these days (Home: today and tomorrow), rather than
+  /// every run the business has ever had - which, for a business with many
+  /// drivers, is thousands of documents re-read every time the screen opens.
+  /// Null for all (the Runs tab's Past needs the history).
+  final List<DateTime>? onlyDays;
+
+  /// A day as run sheets print it, and `delivery_date` stores it: "15/10/2026".
+  static String sheetDate(DateTime day) =>
+      '${day.day.toString().padLeft(2, '0')}/${day.month.toString().padLeft(2, '0')}/${day.year}';
+
   @override
   Widget build(BuildContext context) {
     final db = FirebaseFirestore.instance;
     // Only confirmed runs: drafts under review and runs a same-day re-upload
     // replaced ('superseded') are not deliveries anyone will make.
+    var runs = db
+        .collection('delivery_run')
+        .where('owner_uid', isEqualTo: ownerUid)
+        .where('status', isEqualTo: 'sequenced');
+    if (onlyDays case final days?) {
+      runs = runs.where('delivery_date', whereIn: [for (final day in days) sheetDate(day)]);
+    }
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db
-          .collection('delivery_run')
-          .where('owner_uid', isEqualTo: ownerUid)
-          .where('status', isEqualTo: 'sequenced')
-          .snapshots(),
+      stream: runs.snapshots(),
       builder: (context, runsSnap) {
         if (runsSnap.hasError) {
           AppLog.owner.error('runs stream failed', runsSnap.error, runsSnap.stackTrace);
@@ -147,34 +163,66 @@ class RunLiveBuilder extends StatefulWidget {
 }
 
 class _RunLiveBuilderState extends State<RunLiveBuilder> {
-  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+  /// Firestore's `whereIn` takes at most 30 ids, so a busy morning - more
+  /// than 30 runs on the road - is read as several queries, merged. It used
+  /// to read the first 30 only, and every run after that showed "No signal".
+  static const _chunk = 30;
+
+  final _subscriptions = <StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>[];
+  final _byChunk = <int, Map<String, DateTime>>{};
   String _key = '';
 
   @override
+  void dispose() {
+    _cancel();
+    super.dispose();
+  }
+
+  void _cancel() {
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _subscriptions.clear();
+    _byChunk.clear();
+  }
+
+  /// Re-subscribed only when the set of runs changes, not on every rebuild.
+  void _subscribe(List<String> ids) {
+    _cancel();
+    for (var start = 0, chunk = 0; start < ids.length; start += _chunk, chunk++) {
+      final index = chunk;
+      final part = ids.sublist(start, start + _chunk > ids.length ? ids.length : start + _chunk);
+      _subscriptions.add(
+        FirebaseFirestore.instance
+            .collection('run_live')
+            .where('owner_uid', isEqualTo: widget.ownerUid)
+            .where(FieldPath.documentId, whereIn: part)
+            .snapshots()
+            .listen(
+              (snap) {
+                if (!mounted) return;
+                setState(
+                  () => _byChunk[index] = {
+                    for (final doc in snap.docs)
+                      if (doc.data()['last_seen_at'] case final Timestamp t) doc.id: t.toDate(),
+                  },
+                );
+              },
+              onError: (Object error, StackTrace stack) =>
+                  AppLog.owner.error('run_live stream failed', error, stack),
+            ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // Re-subscribed only when the set of runs changes, not on every rebuild.
-    final ids = ([...widget.runIds]..sort()).take(30).toList(); // whereIn's limit
+    final ids = [...widget.runIds]..sort();
     final key = ids.join(',');
     if (key != _key) {
       _key = key;
-      _stream = ids.isEmpty
-          ? null
-          : FirebaseFirestore.instance
-                .collection('run_live')
-                .where('owner_uid', isEqualTo: widget.ownerUid)
-                .where(FieldPath.documentId, whereIn: ids)
-                .snapshots();
+      _subscribe(ids);
     }
-    if (_stream == null) return widget.builder(context, const {});
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _stream,
-      builder: (context, snap) {
-        if (snap.hasError) AppLog.owner.error('run_live stream failed', snap.error, snap.stackTrace);
-        return widget.builder(context, {
-          for (final doc in snap.data?.docs ?? const <QueryDocumentSnapshot<Map<String, dynamic>>>[])
-            if (doc.data()['last_seen_at'] case final Timestamp t) doc.id: t.toDate(),
-        });
-      },
-    );
+    return widget.builder(context, {for (final part in _byChunk.values) ...part});
   }
 }

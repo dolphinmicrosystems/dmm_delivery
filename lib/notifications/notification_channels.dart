@@ -69,7 +69,16 @@ class NotificationChannels {
     importance: Importance.high,
   );
 
-  static const all = [assignments, runs, liveRuns, drivers, status, reminders];
+  /// Both sides: the load sheet changed. Drivers: the owner added or took
+  /// off a product. Owners: a driver is short of one.
+  static const load = AndroidNotificationChannel(
+    'load',
+    'Load sheet changes',
+    description: 'When the products to load on a run change, or a driver is short.',
+    importance: Importance.high,
+  );
+
+  static const all = [assignments, runs, liveRuns, drivers, status, reminders, load];
 
   /// The channel a pushed notification names, or [assignments] for one that
   /// names none (the manifest's default).

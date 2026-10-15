@@ -17,7 +17,7 @@ The backend lives in a **separate repo, `dmm-delivery-app`** (Cloud Functions + 
 rules), checked out alongside this one at `../dmm-delivery-app`. Dart doc comments reference its files by
 name (`process_run_sheet_upload.py`, `before_sign_in_fn.py`, `handle_sign_in.py`, `firestore_paths.py`,
 `build_rider_board.py`) — those names are the contract. Its tests run with
-`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (414 tests). Several features span both repos —
+`cd ../dmm-delivery-app && ./.venv/bin/python -m pytest` (423 tests). Several features span both repos —
 route naming and the stop-order merge below are the current examples — and a client change that writes a
 new Firestore field is inert until that repo's `firestore.rules` is deployed.
 
@@ -33,7 +33,7 @@ several things that look like bugs (two presence states, no map panel on the boa
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (277 tests, all passing)
+- Run all tests: `flutter test` (281 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -91,7 +91,7 @@ with the ephemeral workspace.
 - `AuthStatus.needsRole` is a defensive dead-end, not an expected state.
 
 **Two shells, two different worlds.** `RootShell` (`lib/screens/root_shell.dart`) sends drivers to
-`DriverShell` (`lib/driver/`, tabs Home/Runs/Routes; online whenever the app is open) and *everyone else,
+`DriverShell` (`lib/driver/`, tabs Home/Runs/Load/Routes; online whenever the app is open) and *everyone else,
 including a null role*, to `_OwnerShell` (4 tabs: Home/Routes/Runs/Drivers; Home's tiles switch tabs through `OwnerTab`). Owner screens are **bodies, not
 `Scaffold`s** — the app bar, end drawer and bottom bar are hosted once in `_OwnerShell` and shared across
 tabs via `IndexedStack`.
@@ -115,7 +115,8 @@ OwnerRoutesScreen      → circuits/{roundKey}, most recently updated first → 
 RunsScreen             → delivery_run (owner_uid, status == sequenced) + circuits + route_assignments +
                          driver_invitations → RunListing cards in Upcoming / Today / Past tabs
 RunDetailScreen        → one delivery_run + its stops, streamed: map with delivered stops ticked, progress
-                         + the driver's started / finished / total time, and "Delivery photos (n)"
+                         + the driver's started / finished / total time, "Load sheet" (RunLoadScreen)
+                         and "Delivery photos (n)"
                            → RunPhotosScreen (pod_photo_url per stop, from the pod-photos bucket)
 OwnerDriversScreen     → driver_invitations (invite / rename / resend, all four states) +
                          DriverAccessApi → driver-access function (remove / restore);
@@ -184,8 +185,11 @@ are deleted.
   - The counting is pure and tested: `OwnerToday` (`lib/models/owner_today.dart`,
     `test/owner_today_test.dart`).
   - `OwnerRunDataBuilder` (`owner_run_data.dart`) loads the runs, routes, schedule, names and vehicles for
-    Home, the Runs tab and the roster; `RunLiveBuilder` reads `run_live` for the runs under way (by id,
-    at most 30).
+    Home, the Runs tab and the roster. Home passes `onlyDays` (today, tomorrow), so it reads those runs
+    only, by exact `delivery_date` (zero-padded "DD/MM/YYYY"; the backend's parser guarantees the padding).
+    The Runs tab still reads every run (its Past tab is the history): paging it is the next step for a
+    big fleet. `RunLiveBuilder` reads `run_live` for the runs under way, in queries of 30 ids
+    (`whereIn`'s limit), merged, so any number of live runs get their heartbeat.
 - **Delivery roster** (`owner_roster_screen.dart`): the next 7 days as day chips (a dot marks a day with a
   route nobody drives), and every route that day with its driver and times. Built by `WeekRoster`
   (`lib/models/week_roster.dart`, tested) from `route_assignments` through `RouteAssignment.activeAt` at
@@ -466,6 +470,21 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
       delivered". It is given the schedule's `startTime`/`endTime` by whoever opens it.
     - **Foreground only.** Location and voice stop when the screen is off or another app is in front. A
       foreground service with background location is the next step.
+  - **Load tab** (`driver_load_screen.dart`): what to put on the truck, in place of reading the paper sheet.
+    Today's unfinished runs (chips if several), else the next run, so it can be loaded the night before.
+    - **The sheet** (`LoadSheetView`, `lib/widgets/load_sheet_view.dart`, shared with the owner): every
+      product on the run's stops totalled by code (unlocated stops included: they still need milk), plus the
+      changes, heaviest first. Pure and tested: `LoadSheet` (`lib/models/load_sheet.dart`,
+      `test/load_sheet_test.dart`).
+    - **Changes** are records in `delivery_run/{runId}/load_changes/{id}`, never edited, so the list is the
+      history: the owner's `adjust` (+ extra / − take off, any product, including one not on the sheet,
+      coded `LoadChange.codeFor(name)`) and the driver's `short` (how many missing). A note is optional.
+      The backend's notify-load-change tells the other side (channel `load`). Writes go through `LoadWriter`.
+    - **Ticks:** the driver ticks each product as it goes on. Stored in
+      `delivery_run/{runId}/load_state/checklist` as code -> the quantity ticked, so if the owner changes a
+      product after it was ticked, it reads unticked again. The owner sees "Driver has loaded 3 of 7".
+    - **The owner** opens the same sheet from the run screen's "Load sheet" button (`RunLoadScreen`), with
+      "Add or take off". A finished run's sheet is read-only.
   - **Start this route today** (`route_starter.dart`): on the route view, a today booking and Home's next-up
     card, when `DriverSchedule.scheduledToday`. It writes `run_starts/{id}` and waits for the backend's
     `start-route-run` to answer with a run (today's sheet, or a copy of the last one), then opens the
@@ -521,7 +540,8 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     `dmm-delivery-app/src/dmm_delivery/adapters/fcm_user_push.py` and the manifest's FCM defaults. Don't
     rename them on one side only.
   - **Channels:** `assignments` (drivers' routes), `runs` (owners: a run started or finished),
-    `live_runs` (low importance, silent), `drivers` (owners: a driver opened the app) and `status`
+    `live_runs` (low importance, silent), `drivers` (owners: a driver opened the app), `load` (the load
+    sheet changed: owner -> driver, or a driver's shortage -> owners) and `status`
     (no longer sent; was the driver's own "You're online"). The backend's ids are in `ports/user_push.py`; keep them in step.
   - **Online means the app is open; there is no switch** (`lib/driver/driver_presence.dart`).
     `DriverPresenceTracker` wraps the driver shell and writes `driver_presence/{uid}` (`owner_uid`, `online`,
