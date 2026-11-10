@@ -98,6 +98,21 @@ class SettingsStore {
     }, SetOptions(merge: true));
   }
 
+  /// Whether this person live-tracks one particular driver: the ongoing
+  /// notification that follows their run, delivery by delivery (the backend's
+  /// notify-run reads `live_track_drivers`, their uids). Off unless turned
+  /// on, from that driver's page.
+  Stream<bool> liveTrackFor(String driverUid) => _personal.snapshots().map(
+    (snap) => (snap.data()?['live_track_drivers'] as List?)?.contains(driverUid) ?? false,
+  );
+
+  Future<void> setLiveTrackFor(String driverUid, bool on) async {
+    AppLog.owner('setting live tracking for one driver', {'on': on});
+    await _personal.set({
+      'live_track_drivers': on ? FieldValue.arrayUnion([driverUid]) : FieldValue.arrayRemove([driverUid]),
+    }, SetOptions(merge: true));
+  }
+
   /// Whether this owner hears "Sonia hasn't started Run 3" (run-alerts).
   Stream<bool> lateStartAlerts() =>
       _personal.snapshots().map((snap) => snap.data()?['late_start_alerts'] != false);

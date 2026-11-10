@@ -7,7 +7,8 @@ import 'pod_photo.dart';
 
 /// One stop, read-only: who, where, what to deliver and the instructions -
 /// and, once delivered, when and the photo. Opened by tapping a stop on a
-/// driver's map or list.
+/// driver's map or list. [actionLabel] / [onAction] add one button at the
+/// bottom (the driving screen's "Go here next"); the sheet closes first.
 Future<void> showStopDetails(
   BuildContext context, {
   required int number,
@@ -19,6 +20,8 @@ Future<void> showStopDetails(
   DateTime? deliveredAt,
   String? photoUrl,
   String? missingItemsNote,
+  String? actionLabel,
+  VoidCallback? onAction,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -82,6 +85,18 @@ Future<void> showStopDetails(
                   aspectRatio: 4 / 3,
                   child: PodPhoto(url: photoUrl, fit: BoxFit.cover),
                 ),
+              ),
+            ],
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  onAction();
+                },
+                icon: const Icon(Icons.navigation_rounded),
+                label: Text(actionLabel),
+                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
               ),
             ],
           ],

@@ -60,8 +60,18 @@ class DriverDetailScreen extends StatelessWidget {
               ),
             )
           else ...[
-            // This owner's own choice (user_settings), off by default; the
-            // Settings switch covers every driver at once.
+            // This owner's own choices (user_settings), both off by default.
+            SwitchSettingCard(
+              title: 'Live track ${invitation.displayName}',
+              subtitle:
+                  'A notification that follows their run while they drive: how many are delivered, '
+                  'the next stop and whether they are on time.',
+              value: SettingsStore(authState).liveTrackFor(uid),
+              onChanged: (on) => SettingsStore(authState).setLiveTrackFor(uid, on),
+              what: 'live tracking',
+            ),
+            const SizedBox(height: 12),
+            // The Settings switch covers every driver at once.
             SwitchSettingCard(
               title: 'Tell me when ${invitation.displayName} opens the app',
               subtitle: 'A notification when they open Blue Dot after half an hour or more away.',

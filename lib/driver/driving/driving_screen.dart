@@ -143,11 +143,21 @@ class _DrivingScreenState extends State<DrivingScreen> {
   /// The van's last known direction of travel, for the heading-up map.
   double _heading = 0;
 
-  /// The top bar (back, run name, End run) is hidden while driving, so the
-  /// map has the screen. A tap on the map shows it; another tap hides it.
+  /// There is no top bar: the map has the screen. While driving, a tap on the
+  /// map floats a back button over it for a few seconds; pressing it asks
+  /// before leaving, exactly as the phone's own back does.
   bool _chrome = false;
+  Timer? _chromeTimer;
 
-  void _toggleChrome() => setState(() => _chrome = !_chrome);
+  void _toggleChrome() {
+    _chromeTimer?.cancel();
+    setState(() => _chrome = !_chrome);
+    if (_chrome) {
+      _chromeTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _chrome = false);
+      });
+    }
+  }
 
   NavRoute? _nav;
   String? _navFor;
@@ -158,6 +168,10 @@ class _DrivingScreenState extends State<DrivingScreen> {
   /// why it failed. Null once a route is up.
   String? _navStatus;
   bool _navFailed = false;
+
+  /// Where the van was when directions failed: once it is somewhere else,
+  /// they are asked for again without the driver tapping Retry.
+  LatLng? _navFailedFrom;
   DateTime? _navRequestedAt;
   int _offRouteFixes = 0;
   final _cues = <String>{};
@@ -185,15 +199,87 @@ class _DrivingScreenState extends State<DrivingScreen> {
     );
   }
 
+  /// The stop being driven to when it isn't simply the first one left: the
+  /// driver picked it ("Go here next", or "Deliver here" beside another
+  /// stop), or it was worked out after an out-of-order delivery
+  /// (DrivingLogic.nextAfterDelivery). Null: the planned order.
+  String? _targetId;
+
+  /// Whether a run reopened part-way has had its next stop worked out from
+  /// what was delivered last (once, when the first position arrives).
+  bool _targetResolved = false;
+
+  List<String> get _stopIds => [for (final s in _stops) s.id];
+  Set<String> get _deliveredIds => {
+    for (final s in _stops)
+      if (s.delivered) s.id,
+  };
+
   _Stop? get _current {
-    final index = DrivingLogic.currentIndex(
-      [for (final s in _stops) s.id],
-      {
-        for (final s in _stops)
-          if (s.delivered) s.id,
-      },
-    );
+    final chosen = _stops.where((s) => s.id == _targetId && !s.delivered).firstOrNull;
+    if (chosen != null) return chosen;
+    final index = DrivingLogic.currentIndex(_stopIds, _deliveredIds);
     return index == null ? null : _stops[index];
+  }
+
+  double? _metersToId(String stopId) {
+    final stop = _stops.where((s) => s.id == stopId).firstOrNull;
+    return stop == null ? null : _metersTo(stop);
+  }
+
+  /// Another stop still to deliver that the van is standing at, while the
+  /// one being driven to is somewhere else: offered as "Deliver here".
+  _Stop? get _nearbyOther {
+    final current = _current, accuracy = _position?.accuracy;
+    if (!_started || _finished || current == null || _position == null) return null;
+    bool near(_Stop stop) {
+      final meters = _metersTo(stop);
+      return meters != null && DrivingLogic.isNear(meters, accuracy: accuracy);
+    }
+
+    if (near(current)) return null;
+    return _stops.where((s) => !s.delivered && s.id != current.id && near(s)).firstOrNull;
+  }
+
+  /// Drive to [stop] next, whatever the planned order says. Directions, the
+  /// voice and the line ahead all follow from the new target.
+  void _goTo(_Stop stop) {
+    AppLog.auth('driving: target chosen', {'stopId': stop.id});
+    setState(() {
+      _targetId = stop.id;
+      _targetResolved = true;
+      _panelOpen = false;
+      _follow = true;
+      _resetDirections();
+    });
+    final here = _position;
+    if (here != null) {
+      _speakIfDue();
+      _guide(here);
+    }
+  }
+
+  /// A new stop to route to: forget the last one's failure or wait.
+  void _resetDirections() {
+    _navFailed = false;
+    _navFailedFrom = null;
+    _navStatus = null;
+    _navRequestedAt = null;
+    _offRouteFixes = 0;
+  }
+
+  /// A run opened part-way through: carry on from the stop delivered last
+  /// rather than going back to the first one skipped, if that is nearer.
+  void _resolveTarget() {
+    if (_targetResolved || _position == null || _stops.isEmpty) return;
+    _targetResolved = true;
+    _Stop? last;
+    for (final stop in _stops.where((s) => s.delivered)) {
+      final at = stop.data['delivered_at'], lastAt = last?.data['delivered_at'];
+      if (at is Timestamp && (lastAt is! Timestamp || at.compareTo(lastAt) > 0)) last = stop;
+    }
+    if (last == null) return;
+    _targetId = DrivingLogic.nextAfterDelivery(_stopIds, _deliveredIds, last.id, metersTo: _metersToId);
   }
 
   double? _metersTo(_Stop stop) {
@@ -215,6 +301,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   @override
   void dispose() {
+    _chromeTimer?.cancel();
     _positionSub?.cancel();
     _heartbeat.stop();
     _voiceSetting?.cancel();
@@ -245,6 +332,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
             _onPosition,
             onError: (Object error) => AppLog.auth.error('position stream failed', error, null),
           );
+      // The stream can take a while to give a first fix to a phone standing
+      // still: start from where it last was, so directions come up at once.
+      final last = await Geolocator.getLastKnownPosition();
+      // Only a recent one: an old fix may be from another place entirely.
+      final fresh =
+          last != null && DateTime.now().difference(last.timestamp).abs() < const Duration(minutes: 2);
+      if (fresh && mounted && _position == null) _onPosition(last);
     } catch (error, stack) {
       AppLog.auth.error('location setup failed', error, stack);
     }
@@ -258,6 +352,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
     // A phone's heading is only trustworthy when it's moving.
     if (position.speed > 1.5 && position.heading >= 0) _heading = position.heading;
+    _resolveTarget();
     _followVan(position);
     _speakIfDue();
     _guide(position);
@@ -290,10 +385,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
   /// along it, re-route after two fixes off it, and say each turn.
   void _guide(Position position) {
     final stop = _current;
+    final here = LatLng(position.latitude, position.longitude);
+    // A failure from somewhere else (a stale first fix, a spot with no road)
+    // says nothing about here.
+    final failedFrom = _navFailedFrom;
+    if (_navFailed && failedFrom != null && DrivingLogic.metersBetween(failedFrom, here) > 150) {
+      _resetDirections();
+    }
     final ready = _guidance && _started && !_finished && RoutesClient.available && !_navFailed;
     if (!ready || stop == null) return;
     if (_arrived.contains(stop.id) || stop.data['arrived_at'] != null) return; // there: no more directions
-    final here = LatLng(position.latitude, position.longitude);
     final nav = _nav;
     if (_navFor != stop.id || nav == null) {
       _fetchRoute(stop, here, position.heading);
@@ -308,6 +409,17 @@ class _DrivingScreenState extends State<DrivingScreen> {
     _offRouteFixes = 0;
     final cue = TurnByTurn.cue(nav, progress, stop.stop.customerName, _cues);
     if (cue != null) _voice.say(cue, urgent: progress.metersToTurn <= TurnByTurn.nowMeters);
+  }
+
+  /// Directions to the current stop without waiting for the van to move. A
+  /// phone standing still reports no new fix, so a route asked for only on a
+  /// fix never came when the fix arrived before the run's stops did, or
+  /// before Start was pressed. Called whenever the run or its stops change.
+  void _ensureRoute() {
+    final stop = _current, here = _position;
+    if (here == null || stop == null) return;
+    if (_nav != null && _navFor == stop.id) return;
+    _guide(here);
   }
 
   Future<void> _fetchRoute(_Stop stop, LatLng here, double heading, {bool reroute = false}) async {
@@ -345,8 +457,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
           _navStatus = error is RoutesException
               ? error.message
               : "Couldn't get directions. Check your connection.";
-          // Stop asking on every fix; "Retry" or "Directions" asks again.
+          // Stop asking on every fix; "Retry", or moving on, asks again.
           _navFailed = true;
+          _navFailedFrom = here;
         });
       }
     } finally {
@@ -437,6 +550,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
     }
     await _attempt('save the delivery', () async {
       await _writer.delivered(stop.id, position: _position, photo: photo);
+      // Where next: the planned order, unless stops are being done out of
+      // it - then the nearer of the earliest one skipped and the one after
+      // this. Decided here, once, so it doesn't swap as the van moves.
+      _targetId = DrivingLogic.nextAfterDelivery(_stopIds, _deliveredIds, stop.id, metersTo: _metersToId);
+      _targetResolved = true;
+      _panelOpen = false;
+      _resetDirections();
       // The stream brings the next stop, a different id: it is said when it
       // arrives. (Clearing what was said would repeat this one meanwhile.)
       final remaining = _stops.where((s) => !s.delivered && s.id != stop.id).length;
@@ -518,6 +638,23 @@ class _DrivingScreenState extends State<DrivingScreen> {
     _recentre();
   }
 
+  /// "Exit" on the bottom bar: no turn-by-turn, no line to follow, the map
+  /// north-up again - for a driver who knows the way. The stop, its items and
+  /// Arrived all stay; "Navigate" brings the directions back.
+  void _exitNavigation() {
+    AppLog.auth('directions: exited');
+    _voice.stop();
+    setState(() {
+      _guidance = false;
+      _nav = null;
+      _navFor = null;
+      _progress = null;
+      _resetDirections();
+    });
+    if (_mapReady && _map.camera.rotation != 0) _map.rotate(0);
+    _recentre();
+  }
+
   /// The voice on or off - the button on the map, and the icon in the bar.
   /// Saved as the driver's setting (Settings -> Voice prompts), so it stays
   /// as they left it next time. Turning it back on doesn't repeat anything.
@@ -556,6 +693,11 @@ class _DrivingScreenState extends State<DrivingScreen> {
       phone: stop.data['phone'] as String?,
       deliveredAt: (stop.data['delivered_at'] as Timestamp?)?.toDate().toLocal(),
       photoUrl: stop.data['pod_photo_url'] as String?,
+      // Any stop still to do can be the next one, whatever the order says.
+      actionLabel: _started && !_finished && !stop.delivered && stop.id != _current?.id
+          ? 'Go here next'
+          : null,
+      onAction: () => _goTo(stop),
     );
   }
 
@@ -589,7 +731,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
   bool _leaving = false;
   bool _resumeChecked = false;
 
-  /// Back (the top bar's arrow or the phone's back gesture) on a run under
+  /// Back (the floating arrow or the phone's back gesture) on a run under
   /// way asks first, and the owner hears that the driver left. A run not
   /// started, or finished, just closes.
   Future<void> _confirmLeave() async {
@@ -656,21 +798,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   Widget _scaffold(BuildContext context) {
     return Scaffold(
-      appBar: _chrome
-          ? AppBar(
-              title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
-              actions: [
-                if (_started && !_finished)
-                  PopupMenuButton<String>(
-                    onSelected: (_) => _end(),
-                    itemBuilder: (_) => const [PopupMenuItem(value: 'end', child: Text('End run'))],
-                  ),
-              ],
-            )
-          : null,
-      // Without the bar, keep the map (and its credits) below the status bar.
+      // No app bar: keep the map (and its credits) below the status bar.
       body: SafeArea(
-        top: !_chrome,
         bottom: false,
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: _runStream,
@@ -695,7 +824,9 @@ class _DrivingScreenState extends State<DrivingScreen> {
               }
               // A newly arrived stop list (a delivery landing) may need saying.
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _speakIfDue();
+                if (!mounted) return;
+                _speakIfDue();
+                _ensureRoute();
               });
               return Stack(
                 children: [
@@ -730,8 +861,31 @@ class _DrivingScreenState extends State<DrivingScreen> {
                       ],
                     ),
                   ),
-                  if (_turnBanner() case final banner?)
-                    Positioned(top: 12, left: 12, right: 72, child: banner),
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    right: 72,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Always there before the run starts and after it
+                        // ends; mid-run only for a moment after a map tap.
+                        if (_chrome || !_started || _finished || _current == null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: FloatingActionButton.small(
+                              heroTag: 'back',
+                              tooltip: 'Back',
+                              backgroundColor: Colors.white,
+                              foregroundColor: AppColors.ink,
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              child: const Icon(Icons.arrow_back_rounded),
+                            ),
+                          ),
+                        ?_turnBanner(),
+                      ],
+                    ),
+                  ),
                   Positioned(left: 0, right: 0, bottom: 0, child: _buildPanel()),
                 ],
               );
@@ -749,29 +903,37 @@ class _DrivingScreenState extends State<DrivingScreen> {
         depotLng = (_run['depot_lng'] as num?)?.toDouble();
     final depot = depotLat == null || depotLng == null ? null : LatLng(depotLat, depotLng);
 
-    // The road still to drive: from the last delivered stop (or the depot)
-    // through every stop left, along the run's road shapes where it has them.
+    // The road ahead. First to the stop being driven to: the directions'
+    // line, else the run's own road shape from the stop before it (when that
+    // is where the van has come from), else straight from the van. Then
+    // through every stop left - that one first, the rest in the planned
+    // order - along the run's road shapes where it has them.
     final navLine = _guidance && _navFor == current?.id ? _nav?.points : null;
+    final byId = {for (final stop in _stops) stop.id: stop};
+    List<LatLng>? lead = navLine;
+    if (lead == null && current != null && current.located) {
+      final index = _stops.indexOf(current);
+      final before = index > 0 ? _stops[index - 1] : null;
+      final fromKey = index == 0
+          ? DeliveryEstimate.depotKey
+          : (before!.delivered ? before.stop.addressKey : null);
+      final toKey = current.stop.addressKey;
+      lead = fromKey == null || toKey == null ? null : _road.shapes[DeliveryEstimate.legKey(fromKey, toKey)];
+      lead ??= here == null ? null : [here, current.stop.location];
+    }
     final legs = <List<LatLng>>[];
-    String? previousKey = DeliveryEstimate.depotKey;
-    LatLng? previous = depot;
-    for (final stop in _stops) {
+    _Stop? previous;
+    for (final id in DrivingLogic.remainingOrder(_stopIds, _deliveredIds, current?.id)) {
+      final stop = byId[id]!;
       if (!stop.located) continue;
-      if (stop.delivered) {
-        previousKey = stop.stop.addressKey;
-        previous = stop.stop.location;
-        continue;
+      if (previous != null) {
+        final fromKey = previous.stop.addressKey, toKey = stop.stop.addressKey;
+        final shape = fromKey == null || toKey == null
+            ? null
+            : _road.shapes[DeliveryEstimate.legKey(fromKey, toKey)];
+        legs.add(shape ?? [previous.stop.location, stop.stop.location]);
       }
-      final shape = previousKey == null || stop.stop.addressKey == null
-          ? null
-          : _road.shapes[DeliveryEstimate.legKey(previousKey, stop.stop.addressKey!)];
-      if (shape != null) {
-        legs.add(shape);
-      } else if (previous != null) {
-        legs.add([previous, stop.stop.location]);
-      }
-      previousKey = stop.stop.addressKey;
-      previous = stop.stop.location;
+      previous = stop;
     }
 
     return FlutterMap(
@@ -794,22 +956,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
         const BasemapLayer(),
         PolylineLayer(
           polylines: [
-            // With directions, the road from the van to the stop leads; the
-            // rest of the run is drawn faint behind it.
-            for (final (index, points) in legs.indexed)
+            // The rest of the run, faint; the way to the next stop leads.
+            for (final points in legs)
+              Polyline(points: points, strokeWidth: 4, color: AppColors.brand.withValues(alpha: 0.35)),
+            if (lead != null)
               Polyline(
-                points: points,
-                strokeWidth: index == 0 && navLine == null ? 6 : 4,
-                color: index == 0 && navLine == null
-                    ? AppColors.brand
-                    : AppColors.brand.withValues(alpha: 0.35),
-              ),
-            if (navLine != null)
-              Polyline(
-                points: navLine,
-                strokeWidth: 7,
+                points: lead,
+                strokeWidth: navLine == null ? 6 : 7,
                 color: AppColors.brand,
-                borderStrokeWidth: 2,
+                borderStrokeWidth: navLine == null ? 0 : 2,
                 borderColor: Colors.white,
               ),
           ],
@@ -953,103 +1108,109 @@ class _DrivingScreenState extends State<DrivingScreen> {
         onEnd: _end,
         onClose: () => Navigator.of(context).pop(),
       );
-    } else if (_navigatingNow && !_panelOpen) {
-      final nav = _nav!, progress = _progress;
-      final left = progress == null ? null : TurnByTurn.remainingMeters(nav, progress);
-      final time = progress == null ? null : TurnByTurn.remainingTime(nav, progress);
-      final arrive = time == null ? null : DateTime.now().add(time);
-      content = InkWell(
-        onTap: () => setState(() => _panelOpen = true),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    current.stop.customerName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    [
-                      if (left != null) DrivingLogic.distanceLabel(left),
-                      if (time != null) '${(time.inSeconds / 60).ceil()} min',
-                      if (arrive != null) 'arrive ${formatClock(arrive.hour, arrive.minute)}',
-                    ].join(' · '),
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      color: AppColors.brand,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.keyboard_arrow_up_rounded, color: AppColors.inkMuted),
-          ],
-        ),
-      );
     } else {
       final meters = _metersTo(current);
       final here = _position;
-      content = _StopPanel(
+      // Directions' own figures when there is a route to this stop.
+      final nav = _guidance && _navFor == current.id ? _nav : null;
+      final progress = nav == null ? null : _progress;
+      final time = nav == null || progress == null ? null : TurnByTurn.remainingTime(nav, progress);
+      content = _DrivePanel(
         stop: current,
         number: _stops.indexOf(current) + 1,
         total: _stops.length,
+        deliveredCount: _stops.where((s) => s.delivered).length,
+        timing: _timing,
         meters: meters,
         direction: here == null || !current.located
             ? null
             : DrivingLogic.direction(LatLng(here.latitude, here.longitude), current.stop.location),
+        roadMeters: nav == null || progress == null ? null : TurnByTurn.remainingMeters(nav, progress),
+        roadTime: time,
         near: meters != null && DrivingLogic.isNear(meters, accuracy: here?.accuracy),
         arrived: _arrived.contains(current.id) || current.data['arrived_at'] != null,
         busy: _busy,
         photos: DeliveryWriter.photosAvailable,
-        navigating: _navigatingNow,
+        guidance: _guidance,
+        directionsAvailable: RoutesClient.available,
         noLocation: _locationProblem != null,
-        onCollapse: () => setState(() => _panelOpen = false),
+        expanded: _panelOpen,
+        onToggle: () => setState(() => _panelOpen = !_panelOpen),
+        onExitNavigation: _exitNavigation,
+        onNavigate: () => _directions(current),
         onArrived: () => _arrive(current),
         onDeliver: (withPhoto) => _deliver(current, withPhoto: withPhoto),
       );
     }
-    return SafeArea(
-      top: false,
-      child: Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 4))],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (_locationProblem case final problem?)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(problem, style: const TextStyle(fontSize: 12, color: AppColors.warning)),
+    final other = _nearbyOther;
+    // A sheet flush with the screen's edges, as map apps have it: the white
+    // runs under the gesture bar, so no strip of map is stranded below it.
+    final compact = content is _DrivePanel;
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        12,
+        compact ? 4 : 14,
+        12,
+        MediaQuery.viewPaddingOf(context).bottom + (compact ? 6 : 12),
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, -2))],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_locationProblem case final problem?)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(problem, style: const TextStyle(fontSize: 12, color: AppColors.warning)),
+            ),
+          // Standing at a different stop from the one being driven to:
+          // deliver this one first, and the route carries on from here.
+          if (other != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: AppColors.brandSoft,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => _goTo(other),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.place_rounded, size: 18, color: AppColors.brand),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "You're at ${other.stop.customerName} (stop ${_stops.indexOf(other) + 1})",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const Text(
+                          'Deliver here',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.brand),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
+            ),
+          // Start and Done have no stop line to carry the run's timing.
+          if (content is! _DrivePanel)
             if (_timing case final timing?)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    RunTimingPill(timing),
-                    const Spacer(),
-                    Text(
-                      '${_stops.where((s) => s.delivered).length} of ${_stops.length} delivered',
-                      style: const TextStyle(fontSize: 12, color: AppColors.inkMuted, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
+                child: Align(alignment: Alignment.centerLeft, child: RunTimingPill(timing)),
               ),
-            content,
-          ],
-        ),
+          content,
+        ],
       ),
     );
   }
@@ -1093,20 +1254,43 @@ class _StartPanel extends StatelessWidget {
   }
 }
 
-class _StopPanel extends StatelessWidget {
-  const _StopPanel({
+/// The bar across the bottom while driving to a stop, laid out like a
+/// navigation app's: how long and how far, who it is, what to deliver - in a
+/// few lines, so the map keeps the screen. Tap it for the address, every
+/// product and the whole note.
+///
+///   8 min   4.0 km · arrive 3:58 pm                        (x)  ^
+///   Dynes Mechanical Ltd
+///   24 Donald Street, Kenmure
+///   Stop 1 of 73 · 0 delivered                        [On time]
+///   2 x 2 L Standard Milk
+///   Previously Transport Repairs
+///
+/// The (x) exits navigation (no turn-by-turn, no line; the stop stays) and
+/// becomes "Navigate" to bring it back. Arrived shows at the stop; the
+/// deliver buttons after it.
+class _DrivePanel extends StatelessWidget {
+  const _DrivePanel({
     required this.stop,
     required this.number,
     required this.total,
+    required this.deliveredCount,
+    required this.timing,
     required this.meters,
     required this.direction,
+    required this.roadMeters,
+    required this.roadTime,
     required this.near,
     required this.arrived,
     required this.busy,
     required this.photos,
-    this.navigating = false,
-    this.noLocation = false,
-    this.onCollapse,
+    required this.guidance,
+    required this.directionsAvailable,
+    required this.noLocation,
+    required this.expanded,
+    required this.onToggle,
+    required this.onExitNavigation,
+    required this.onNavigate,
     required this.onArrived,
     required this.onDeliver,
   });
@@ -1114,90 +1298,228 @@ class _StopPanel extends StatelessWidget {
   final _Stop stop;
   final int number;
   final int total;
+  final int deliveredCount;
+  final RunTiming? timing;
+
+  /// Straight-line distance and compass direction to the pin, if known.
   final double? meters;
   final String? direction;
+
+  /// By road, from the directions, while there is a route up.
+  final double? roadMeters;
+  final Duration? roadTime;
+
   final bool near;
   final bool arrived;
   final bool busy;
   final bool photos;
 
-  /// Navigating with the panel opened from the bar: "Hide details" goes back
-  /// to the bar.
-  final bool navigating;
+  /// Turn-by-turn is on (it may still be loading, or have failed).
+  final bool guidance;
+  final bool directionsAvailable;
 
   /// The phone can't tell where it is: Arrived is offered anyway.
   final bool noLocation;
-  final VoidCallback? onCollapse;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback onExitNavigation;
+  final VoidCallback onNavigate;
   final VoidCallback onArrived;
   final void Function(bool withPhoto) onDeliver;
+
+  /// The big figure and the line beside it: time and distance by road while
+  /// navigating, else how far and which way, else just "At the stop".
+  (String, String, Color) get _headline {
+    if (arrived) return ('At the stop', '', AppColors.success);
+    final time = roadTime, road = roadMeters;
+    if (time != null && road != null) {
+      final arrive = DateTime.now().add(time);
+      final minutes = (time.inSeconds / 60).ceil();
+      return (
+        minutes < 60 ? '$minutes min' : '${minutes ~/ 60} h ${minutes % 60} min',
+        '${DrivingLogic.distanceLabel(road)} · arrive ${formatClock(arrive.hour, arrive.minute)}',
+        AppColors.success,
+      );
+    }
+    if (meters != null) return (DrivingLogic.distanceLabel(meters!), direction ?? '', AppColors.brand);
+    return ('Stop $number', '', AppColors.ink);
+  }
 
   @override
   Widget build(BuildContext context) {
     final details = stop.stop;
-    final note = details.instructions?.trim();
+    final note = details.instructions?.trim() ?? '';
+    final (headline, beside, tone) = _headline;
+    final late = timing != null && timing!.isProblem ? timing!.label : null;
+    final name = details.customerName.isEmpty ? details.address : details.customerName;
+    // What to hand over matters at the door, so it opens by itself there.
+    final handover = expanded || arrived;
+    const muted = TextStyle(fontSize: 12.5, color: AppColors.inkMuted, fontWeight: FontWeight.w600);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text(
-              'Stop $number of $total',
-              style: const TextStyle(fontSize: 12, color: AppColors.inkMuted, fontWeight: FontWeight.w700),
-            ),
-            const Spacer(),
-            if (meters != null)
-              Text(
-                arrived ? 'Here' : '${DrivingLogic.distanceLabel(meters!)} ${direction ?? ''}'.trim(),
-                style: const TextStyle(fontSize: 12, color: AppColors.brand, fontWeight: FontWeight.w700),
-              ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(details.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        Text(details.address, style: const TextStyle(fontSize: 13, color: AppColors.inkMuted)),
-        if (details.items.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
+        // The whole strip opens and closes the details: tap, or swipe.
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onToggle,
+          onVerticalDragEnd: (drag) {
+            final speed = drag.primaryVelocity ?? 0;
+            if ((speed < -150 && !expanded) || (speed > 150 && expanded)) onToggle();
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final item in details.items)
-                Chip(
-                  label: Text(item.label, style: const TextStyle(fontSize: 12)),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33000000),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
+              ),
+              Row(
+                children: [
+                  // Exit navigation, here on the bar - or bring it back.
+                  if (directionsAvailable && !arrived)
+                    _RoundButton(
+                      icon: guidance ? Icons.close_rounded : Icons.navigation_rounded,
+                      tooltip: guidance ? 'Exit navigation' : 'Navigate',
+                      color: guidance ? AppColors.ink : AppColors.brand,
+                      onPressed: guidance ? onExitNavigation : onNavigate,
+                    )
+                  else
+                    const SizedBox(width: 44),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text.rich(
+                          TextSpan(
+                            text: headline,
+                            children: [if (beside.isNotEmpty) TextSpan(text: '  $beside', style: muted)],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.4,
+                            height: 1.15,
+                            color: tone,
+                          ),
+                        ),
+                        Text.rich(
+                          TextSpan(
+                            text: '$number · $name',
+                            children: [
+                              if (late != null && !expanded)
+                                TextSpan(
+                                  text: ' · $late',
+                                  style: const TextStyle(
+                                    color: AppColors.warning,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.ink,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _RoundButton(
+                    icon: expanded ? Icons.keyboard_arrow_down_rounded : Icons.keyboard_arrow_up_rounded,
+                    tooltip: expanded ? 'Hide details' : 'Stop details',
+                    color: AppColors.inkMuted,
+                    onPressed: onToggle,
+                  ),
+                ],
+              ),
+              if (expanded) ...[
+                const SizedBox(height: 8),
+                if (details.customerName.isNotEmpty && details.address.isNotEmpty)
+                  Text(details.address, style: const TextStyle(fontSize: 13, color: AppColors.inkMuted)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(child: Text('Stop $number of $total · $deliveredCount delivered', style: muted)),
+                    if (timing case final timing?) RunTimingPill(timing),
+                  ],
+                ),
+              ],
+              if (handover && details.items.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                if (expanded)
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final item in details.items)
+                        Chip(
+                          label: Text(item.label, style: const TextStyle(fontSize: 12.5)),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      const Icon(Icons.inventory_2_outlined, size: 16, color: AppColors.brand),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          details.itemsSummary,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+              if (handover && note.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  note,
+                  maxLines: expanded ? null : 2,
+                  overflow: expanded ? null : TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+                ),
+              ],
             ],
           ),
-        ],
-        if (note != null && note.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(note, style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic)),
-        ],
-        const SizedBox(height: 12),
+        ),
         if (!arrived) ...[
           // Arrived only at the stop - or when the phone can't tell where it
           // is, so the driver is never stuck. Never from kilometres away.
-          if (near || noLocation)
+          if (near || noLocation) ...[
+            const SizedBox(height: 8),
             FilledButton.icon(
               onPressed: busy ? null : onArrived,
               icon: const Icon(Icons.place_rounded),
               label: const Text('Arrived'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-            )
-          else if (navigating)
-            TextButton.icon(
-              onPressed: onCollapse,
-              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-              label: const Text('Hide details'),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
             ),
+          ],
         ] else ...[
+          const SizedBox(height: 8),
           if (photos)
             FilledButton.icon(
               onPressed: busy ? null : () => onDeliver(true),
               icon: const Icon(Icons.photo_camera_rounded),
               label: const Text('Take photo & deliver'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
             ),
           TextButton(
             onPressed: busy ? null : () => onDeliver(false),
@@ -1205,6 +1527,37 @@ class _StopPanel extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// A round outlined button on the drive bar.
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 44,
+      child: IconButton.outlined(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        style: IconButton.styleFrom(
+          foregroundColor: color,
+          side: const BorderSide(color: Color(0x22000000)),
+        ),
+        icon: Icon(icon),
+      ),
     );
   }
 }

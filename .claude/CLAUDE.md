@@ -33,7 +33,7 @@ several things that look like bugs (two presence states, no map panel on the boa
   the same flag, so they fail to start until that file exists. Without a key the maps still work, but
   every basemap tile is watermarked — see the CARTO note under Conventions
 - Analyze/lint: `flutter analyze`
-- Run all tests: `flutter test` (294 tests, all passing)
+- Run all tests: `flutter test` (299 tests, all passing)
 - Run a single test file: `flutter test test/run_sheet_review_test.dart`
 - Run one test by name: `flutter test --plain-name 'is independent of stop order'`
 - Format: **don't run `dart format .`** — the repo is written at ~110 columns in the pre-3.7
@@ -126,6 +126,9 @@ OwnerDriversScreen     → driver_invitations (invite / rename / resend, all fou
                          tap a row → DriverDetailScreen
 DriverDetailScreen     → "Tell me when <name> opens the app" (user_settings/{uid}.presence_alert_drivers,
                            this driver's uid; off unless turned on)
+                         + "Live track <name>" (user_settings/{uid}.live_track_drivers; off unless
+                           turned on): only owners who chose a driver get that driver's live run
+                           notification from notify-run. Started/left/finished alerts go to all.
                          + driver_stats/{owner}_{uid} (read-only, backend-written record + recent runs)
                          + route_assignments/circuits: the Schedule section (regular routes, upcoming
                            runs, days a colleague covers) and "Schedule a run"; each row's ⋮ menu
@@ -460,17 +463,32 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
         - the map turns heading-up (`rotate(-heading)`, the heading taken only while moving > 1.5 m/s);
         - it zooms to 17.5, with the van low on the screen (`move(..., offset:)`);
         - markers counter-rotate (`rotate: true`) to stay upright;
-        - the stop panel shrinks to a bar: name, distance left, minutes, arrival time
-          (`TurnByTurn.remainingMeters`/`remainingTime`). Tap it for the details.
-      - **Leaving navigation mode.** It ends by itself near the stop, where the full panel comes back for
-        Arrived, and resumes for the next stop after a delivery.
-      - **Nothing to dismiss.** The turn banner can't be closed, as in Google Maps.
+        - **the bottom bar** (`_DrivePanel`) is always compact, like a navigation app's: the minutes left big,
+          then "4.0 km · arrive 3:58 pm" (`TurnByTurn.remainingMeters`/`remainingTime`; without a route, the
+          straight-line distance and direction), the business and address, "Stop 1 of 73 · 0 delivered" with
+          the timing pill, the items on one line, the note on one line. Tap it for every product and the whole
+          note. Arrived and the deliver buttons appear under it when they apply.
+      - **Leaving navigation mode.** It ends by itself near the stop and resumes for the next stop after a
+        delivery.
+      - **Exit navigation** is the red ✕ on the bottom bar (`_exitNavigation`): no turn-by-turn, no line, the map
+        north-up; the stop, its items and Arrived stay. "Navigate" in the same place brings it back. The turn
+        banner itself still can't be closed.
       - **No top bar while driving.** A tap on the map shows it (back, run name, End run) and another hides it; the
         map sits below the status bar (`SafeArea`) so its credits stay visible.
       - **A copied run isn't labelled** on the driving screen. The run still carries `copied_from_date`
         for the owner.
       - **Voice on/off lives on the map only,** not in the top bar.
       - The logic is pure and tested (`test/turn_by_turn_test.dart`).
+    - **Any order.** The stop being driven to is `_targetId` when set, else the first one left.
+      - The driver picks one: tap a pin → "Go here next" (`showStopDetails`' action), or "You're at … · Deliver
+        here" on the bar when the van is standing at another undelivered stop.
+      - After each delivery the next is `DrivingLogic.nextAfterDelivery` (tested): in order, simply the next;
+        out of order, the nearer of the earliest stop skipped and the one after the stop just done. Decided
+        once per delivery (and once on reopening a run part-way), never per GPS fix.
+      - The line ahead follows `DrivingLogic.remainingOrder`: the current stop first, then the planned order;
+        road shapes where the run has that leg, straight lines where it doesn't. Directions re-fetch for the
+        new stop, and a failed route no longer blocks directions to the stops after it.
+      - Nothing is written for the order itself: the stops' `delivered_at` times are the record.
     - **The voice queues** (`VoiceGuide`): lines are said in order, and `urgent` lines clear the queue.
     - **Back asks first** on a run under way (`PopScope`, decided at the press from the latest run):
       "Leave the run?" with Stay / Leave / End run. Leave writes `driver_left_at` and the owners are told

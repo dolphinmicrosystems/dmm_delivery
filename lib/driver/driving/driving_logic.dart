@@ -29,6 +29,40 @@ class DrivingLogic {
     return null;
   }
 
+  /// Where to go once [justDelivered] is done, when stops are being delivered
+  /// out of the planned order. Two sensible answers: the earliest stop still
+  /// skipped, or the next one after the stop just delivered. Whichever is
+  /// nearer the van wins ([metersTo]; null for a stop with no pin) - a driver
+  /// who did stop 3 on the way past goes back for 1, one who jumped across
+  /// town carries on from there. In order, the two are the same stop.
+  ///
+  /// Decided once, at the delivery - not on every GPS fix, which would swap
+  /// the target as the van moved.
+  static String? nextAfterDelivery(
+    List<String> stopIds,
+    Set<String> deliveredIds,
+    String justDelivered, {
+    double? Function(String stopId)? metersTo,
+  }) {
+    final left = [for (final id in stopIds) if (!deliveredIds.contains(id) && id != justDelivered) id];
+    if (left.isEmpty) return null;
+    final earliest = left.first;
+    final at = stopIds.indexOf(justDelivered);
+    final onward = left.where((id) => stopIds.indexOf(id) > at).firstOrNull ?? earliest;
+    if (onward == earliest || metersTo == null) return earliest;
+    final toEarliest = metersTo(earliest), toOnward = metersTo(onward);
+    if (toEarliest == null || toOnward == null) return earliest;
+    return toOnward < toEarliest ? onward : earliest;
+  }
+
+  /// The stops still to do, as they will be driven: [currentId] first, then
+  /// the rest in the planned order - for the line drawn ahead of the van.
+  static List<String> remainingOrder(List<String> stopIds, Set<String> deliveredIds, String? currentId) => [
+    if (currentId != null && stopIds.contains(currentId) && !deliveredIds.contains(currentId)) currentId,
+    for (final id in stopIds)
+      if (id != currentId && !deliveredIds.contains(id)) id,
+  ];
+
   static double metersBetween(LatLng a, LatLng b) => _distance.as(LengthUnit.Meter, a, b);
 
   /// Close enough to offer "Arrived" without being asked.
@@ -42,10 +76,12 @@ class DrivingLogic {
     return names[((bearing + 22.5) ~/ 45) % 8];
   }
 
-  /// "600 m", "1.4 km" - for the screen.
+  /// "600 m", "1.4 km", "11,426 km" - for the screen.
   static String distanceLabel(double meters) {
     if (meters < 1000) return '${_roundTo50(meters)} m';
-    return '${(meters / 1000).toStringAsFixed(1)} km';
+    if (meters < 100000) return '${(meters / 1000).toStringAsFixed(1)} km';
+    final km = (meters / 1000).round().toString();
+    return '${km.replaceAllMapped(RegExp(r'\B(?=(\d{3})+$)'), (_) => ',')} km';
   }
 
   /// "600 metres", "1.4 kilometres" - for the voice.

@@ -66,4 +66,39 @@ void main() {
     );
     expect(DrivingLogic.doneLine(60), "That's all 60 delivered. Head back to the depot.");
   });
+
+  group('delivering out of order', () {
+    const ids = ['s1', 's2', 's3', 's4', 's5'];
+
+    test('in order, the next stop is simply the next', () {
+      expect(DrivingLogic.nextAfterDelivery(ids, {}, 's1'), 's2');
+      expect(DrivingLogic.nextAfterDelivery(ids, {'s1', 's2', 's3', 's4'}, 's5'), isNull);
+    });
+
+    test('after jumping ahead, the nearer of the skipped stop and the one after wins', () {
+      // Did s3 first. s4 is 200 m on, s1 is 3 km back: carry on.
+      final carryOn = DrivingLogic.nextAfterDelivery(ids, {}, 's3', metersTo: (id) => id == 's4' ? 200 : 3000);
+      expect(carryOn, 's4');
+      // Did s3 on the way past; s1 is right here: go back for it.
+      final goBack = DrivingLogic.nextAfterDelivery(ids, {}, 's3', metersTo: (id) => id == 's1' ? 150 : 900);
+      expect(goBack, 's1');
+      // No position to judge by: the planned order.
+      expect(DrivingLogic.nextAfterDelivery(ids, {}, 's3'), 's1');
+    });
+
+    test('after the last stop in order, the skipped ones are what is left', () {
+      expect(DrivingLogic.nextAfterDelivery(ids, {'s3', 's4'}, 's5', metersTo: (_) => 100), 's1');
+    });
+
+    test('the road ahead starts at the stop being driven to, then the planned order', () {
+      expect(DrivingLogic.remainingOrder(ids, {'s3'}, 's4'), ['s4', 's1', 's2', 's5']);
+      expect(DrivingLogic.remainingOrder(ids, {'s1'}, 's2'), ['s2', 's3', 's4', 's5']);
+      expect(DrivingLogic.remainingOrder(ids, {'s1'}, null), ['s2', 's3', 's4', 's5']);
+    });
+  });
+
+  test('a very long way reads as whole kilometres', () {
+    expect(DrivingLogic.distanceLabel(1400), '1.4 km');
+    expect(DrivingLogic.distanceLabel(11426000), '11,426 km');
+  });
 }
