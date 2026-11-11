@@ -1,3 +1,5 @@
+import 'live_run_card.dart';
+import '../../models/owner_today.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/delivery_estimate.dart';
@@ -35,12 +37,13 @@ class RunsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final ownerUid = authState.ownerUid;
     return DefaultTabController(
-      length: 3,
-      initialIndex: 1, // Today: what the owner opens this to see
+      length: 4,
+      initialIndex: 2, // Today: what the owner opens this to see
       child: Column(
         children: [
           const TabBar(
             tabs: [
+              Tab(text: 'Live'),
               Tab(text: 'Upcoming'),
               Tab(text: 'Today'),
               Tab(text: 'Past'),
@@ -54,6 +57,7 @@ class RunsScreen extends StatelessWidget {
                     ownerUid: ownerUid,
                     builder: (context, data) => TabBarView(
                       children: [
+                        _LiveList(data: data, authState: authState),
                         _RunList(data: data, phase: RunPhase.upcoming, authState: authState),
                         _RunList(data: data, phase: RunPhase.today, authState: authState),
                         _RunList(data: data, phase: RunPhase.past, authState: authState),
@@ -63,6 +67,67 @@ class RunsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Every run on the road right now, whoever is driving it: the same cards as
+/// Home's "Live now" (driver, vehicle, progress, next stop, on time or late),
+/// worst first. Tap one for its live map - the van, the stops ticked off, the
+/// photos.
+class _LiveList extends StatelessWidget {
+  const _LiveList({required this.data, required this.authState});
+
+  final OwnerRunData data;
+  final AuthState authState;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    return RunLiveBuilder(
+      ownerUid: authState.ownerUid ?? '',
+      runIds: [
+        for (final run in data.runs)
+          if (run.started != null && run.finished == null && run.phase(now) == RunPhase.today) run.id,
+      ],
+      builder: (context, lastSeen) {
+        final live = OwnerToday.build(
+          runs: data.runs,
+          crewFor: (run) {
+            final crew = data.crewFor(run);
+            return (driver: crew.driver, startTime: crew.startTime, endTime: crew.endTime);
+          },
+          lastSeen: lastSeen,
+          now: now,
+        ).live;
+        if (live.isEmpty) {
+          return ListView(
+            padding: const EdgeInsets.all(24),
+            children: const [
+              Text(
+                'No runs on the road right now. A run appears here when its driver starts it, '
+                'and you get a notification.',
+                style: TextStyle(fontSize: 13, color: AppColors.inkMuted, height: 1.4),
+              ),
+            ],
+          );
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          itemCount: live.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final row = live[index];
+            return LiveRunCard(
+              run: row.run,
+              driver: row.crew.driver,
+              vehicle: data.crewFor(row.run).vehicle?.description,
+              timing: row.timing,
+              onTap: () => openRunDetail(context, authState, row),
+            );
+          },
+        );
+      },
     );
   }
 }

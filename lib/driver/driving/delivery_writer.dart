@@ -72,7 +72,10 @@ class DeliveryWriter {
   /// The photo lives at `{ownerUid}/{runId}/{stopId}.jpg`: one folder per
   /// run, so a run's evidence is one listing, and the stop's `pod_photo_url`
   /// points at it.
-  Future<void> delivered(String stopId, {Position? position, Uint8List? photo}) async {
+  ///
+  /// [note] (`rider_note`) says how, when it wasn't a tap at the door: the
+  /// countdown after driving away writes one, so the owner can tell.
+  Future<void> delivered(String stopId, {Position? position, Uint8List? photo, String? note}) async {
     String? photoUrl;
     if (photo != null && photosAvailable) {
       final path = '$ownerUid/$runId/$stopId.jpg';
@@ -87,11 +90,13 @@ class DeliveryWriter {
       'stopId': stopId,
       'photo': photoUrl != null,
       'located': position != null,
+      'auto': note != null,
     });
     await _stop(stopId).update({
       'status': 'delivered',
       'delivered_at': FieldValue.serverTimestamp(),
       'pod_photo_url': ?photoUrl,
+      'rider_note': ?note,
       if (position != null) ...{
         'delivered_lat': position.latitude,
         'delivered_lng': position.longitude,

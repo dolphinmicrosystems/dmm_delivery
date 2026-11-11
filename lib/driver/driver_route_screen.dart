@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../models/run_stop.dart';
 import '../models/run_time.dart';
 import '../services/depot_locator.dart';
+import '../services/run_sheet_pdf.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
@@ -120,7 +121,11 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.surfaceMuted,
-      appBar: AppBar(title: Text(widget.routeName, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
+        // The route's latest run sheet, as the owner uploaded it.
+        actions: [RunSheetPdfButton(routeName: widget.routeName, roundKey: widget.roundKey)],
+      ),
       body: FutureBuilder<_Route?>(
         future: _route,
         builder: (context, snapshot) {

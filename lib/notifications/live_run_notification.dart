@@ -1,6 +1,8 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import 'live_run_art.dart';
 import 'notification_channels.dart';
+import 'notification_router.dart';
 
 /// The owner's live notification of a run being driven: "South Runsheet · Ana"
 /// / "23 of 60 delivered · Next: Otago Glass", a progress bar, a clock running
@@ -36,10 +38,13 @@ class LiveRunNotification {
         final startedMs = int.tryParse('${data['started_ms']}') ?? 0;
         final sub = data['sub'] as String? ?? '';
         const channel = NotificationChannels.liveRuns;
+        final title = data['title'] as String?, body = data['body'] as String?;
         await plugin.show(
           id: _id,
-          title: data['title'] as String?,
-          body: data['body'] as String?,
+          title: title,
+          body: body,
+          // A tap opens the run's live map (NotificationRouter).
+          payload: NotificationRouter.payloadFor(data),
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
               channel.id,
@@ -50,7 +55,16 @@ class LiveRunNotification {
               tag: runId,
               icon: NotificationChannels.icon,
               color: NotificationChannels.brandColor,
-              largeIcon: NotificationChannels.largeIcon,
+              // A truck beside it, and - pulled open - the truck part-way
+              // along its road, as far as the deliveries have got.
+              largeIcon: NotificationChannels.truckIcon,
+              styleInformation: max > 0
+                  ? BigPictureStyleInformation(
+                      ByteArrayAndroidBitmap(LiveRunArt.track(progress.clamp(0, max), max)),
+                      contentTitle: title,
+                      summaryText: body,
+                    )
+                  : null,
               ongoing: true,
               autoCancel: false,
               onlyAlertOnce: true,

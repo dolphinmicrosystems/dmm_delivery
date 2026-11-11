@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../notifications/notification_router.dart';
 import '../../notifications/push_notifications.dart';
 import '../../observability/crash_reporting.dart';
 import '../../state/auth_state.dart';
@@ -54,6 +55,7 @@ class _AuthGateState extends State<AuthGate> {
     final navigator = Navigator.of(context);
     if (navigator.canPop()) {
       AppLog.auth('signed out -> closing open screens');
+      NotificationRouter.attach(null);
       navigator.popUntil((route) => route.isFirst);
     }
   }
@@ -128,6 +130,8 @@ class _AuthGateState extends State<AuthGate> {
             final role = authState.role == AuthRole.driver ? 'rider' : 'owner';
             if (uid != null) {
               PushNotifications.instance.register(uid: uid, ownerUid: authState.ownerUid, role: role);
+              // A notification tapped before sign-in finished opens its run now.
+              NotificationRouter.attach(authState);
               // Crash reports say whose phone it was: the id, never the email.
               CrashReporting.identify(uid: uid, role: role);
             }

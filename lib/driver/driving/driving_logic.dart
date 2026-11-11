@@ -44,7 +44,10 @@ class DrivingLogic {
     String justDelivered, {
     double? Function(String stopId)? metersTo,
   }) {
-    final left = [for (final id in stopIds) if (!deliveredIds.contains(id) && id != justDelivered) id];
+    final left = [
+      for (final id in stopIds)
+        if (!deliveredIds.contains(id) && id != justDelivered) id,
+    ];
     if (left.isEmpty) return null;
     final earliest = left.first;
     final at = stopIds.indexOf(justDelivered);
@@ -68,6 +71,26 @@ class DrivingLogic {
   /// Close enough to offer "Arrived" without being asked.
   static bool isNear(double meters, {double? accuracy}) =>
       meters <= arriveRadiusMeters + (accuracy ?? 0).clamp(0, maxAccuracyAllowance);
+
+  /// The van counts as having stopped at a stop when it is within the arrive
+  /// radius and (nearly) standing still - driving past one doesn't count.
+  static const stoppedSpeed = 1.5; // m/s
+
+  static bool hasStoppedAt(double meters, {double? accuracy, double? speed}) =>
+      isNear(meters, accuracy: accuracy) && (speed == null || speed < 0 || speed <= stoppedSpeed);
+
+  /// Driven away from a stop: well clear of the arrive radius, whatever the
+  /// fix's uncertainty, so GPS drift at the kerb never reads as leaving.
+  static const leaveRadiusMeters = 150.0;
+
+  static bool hasLeft(double meters, {double? accuracy}) =>
+      meters > leaveRadiusMeters + (accuracy ?? 0).clamp(0, maxAccuracyAllowance);
+
+  /// How long "Delivered to ...?" waits before answering itself.
+  static const autoConfirmSeconds = 10;
+
+  /// Saved on a stop marked delivered by the countdown, not by a tap.
+  static const autoConfirmNote = 'Marked delivered automatically after driving away';
 
   /// "north-east": the direction from [from] to [to], to eight points.
   static String direction(LatLng from, LatLng to) {
@@ -107,13 +130,23 @@ class DrivingLogic {
     if (meters != null && direction != null) '${spokenDistance(meters)} $direction.',
   ].join(' ');
 
-  /// Close to the stop: "Approaching Otago Glass. 2 Trim 2L, 1 Blue top. Leave at the back door."
-  static String approachLine(RunStop stop) => [
-    'Approaching ${stop.customerName.isEmpty ? stop.address : stop.customerName}.',
+  /// Close to the stop: "Approaching Otago Glass." What to deliver is said on
+  /// arrival ([arriveLine]), when the driver is about to pick it up.
+  static String approachLine(RunStop stop) => 'Approaching ${_name(stop)}.';
+
+  /// At the stop: "You have arrived at Otago Glass. Deliver 2 Trim 2L, 1 Blue
+  /// top 1L. Leave at the back door." - the items, then the owner's note.
+  static String arriveLine(RunStop stop) => [
+    'You have arrived at ${_name(stop)}.',
     if (stop.items.isNotEmpty)
-      '${[for (final item in stop.items) '${item.quantity} ${item.product}'].join(', ')}.',
+      'Deliver ${[for (final item in stop.items) '${item.quantity} ${item.product}'].join(', ')}.',
     if (stop.instructions case final note? when note.trim().isNotEmpty) _sentence(note.trim()),
   ].join(' ');
+
+  /// Driven away without a tap: "Did you deliver to Otago Glass?"
+  static String leftLine(RunStop stop) => 'Did you deliver to ${_name(stop)}?';
+
+  static String _name(RunStop stop) => stop.customerName.isEmpty ? stop.address : stop.customerName;
 
   /// After the last stop: "That's all 60 delivered. Head back to the depot."
   static String doneLine(int stopCount) => "That's all $stopCount delivered. Head back to the depot.";

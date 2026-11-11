@@ -8,6 +8,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../util/app_log.dart';
 import 'live_run_notification.dart';
 import 'notification_channels.dart';
+import 'notification_router.dart';
 
 /// Push notifications: registering this phone, and showing what arrives.
 ///
@@ -44,10 +45,26 @@ class PushNotifications {
   /// The plugin that draws notifications, initialised with every channel.
   Future<FlutterLocalNotificationsPlugin> plugin() async {
     if (!_prepared) {
-      await NotificationChannels.prepare(_local);
+      await NotificationChannels.prepare(_local, onTap: NotificationRouter.openFromPayload);
       _prepared = true;
+      _listenForTaps();
     }
     return _local;
+  }
+
+  /// Taps on notifications: ones Android drew from a push while the app was
+  /// in the background, and whichever notification started the app.
+  void _listenForTaps() {
+    if (kIsWeb) return;
+    FirebaseMessaging.onMessageOpenedApp.listen((message) => NotificationRouter.openFromData(message.data));
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) NotificationRouter.openFromData(message.data);
+    });
+    _local.getNotificationAppLaunchDetails().then((details) {
+      if (details?.didNotificationLaunchApp ?? false) {
+        NotificationRouter.openFromPayload(details!.notificationResponse?.payload);
+      }
+    });
   }
 
   /// Registers this phone for [uid]. Safe to call again for the same user.
@@ -121,9 +138,11 @@ class PushNotifications {
     if (notification == null) return;
     final channel = NotificationChannels.byId(notification.android?.channelId);
     await _local.show(
-      id: message.messageId.hashCode,
+      // A tagged notification replaces its predecessor (same id + tag).
+      id: notification.android?.tag == null ? message.messageId.hashCode : 7002,
       title: notification.title,
       body: notification.body,
+      payload: NotificationRouter.payloadFor(message.data),
       notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           channel.id,
@@ -134,6 +153,8 @@ class PushNotifications {
           icon: NotificationChannels.icon,
           color: NotificationChannels.brandColor,
           largeIcon: NotificationChannels.largeIcon,
+          // "Ana delivered: ..." replaces the one before it for that run.
+          tag: notification.android?.tag,
           styleInformation: BigTextStyleInformation(notification.body ?? ''),
         ),
       ),

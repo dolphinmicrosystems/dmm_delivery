@@ -60,11 +60,30 @@ void main() {
       DrivingLogic.nextLine(glass, meters: 612, direction: 'north-east'),
       'Next: Otago Glass, 12 Orari Street. 600 metres north-east.',
     );
+    expect(DrivingLogic.approachLine(glass), 'Approaching Otago Glass.');
     expect(
-      DrivingLogic.approachLine(glass),
-      'Approaching Otago Glass. 2 Trim 2L, 1 Blue top 1L. Leave at the back door.',
+      DrivingLogic.arriveLine(glass),
+      'You have arrived at Otago Glass. Deliver 2 Trim 2L, 1 Blue top 1L. Leave at the back door.',
     );
+    expect(DrivingLogic.leftLine(glass), 'Did you deliver to Otago Glass?');
     expect(DrivingLogic.doneLine(60), "That's all 60 delivered. Head back to the depot.");
+  });
+
+  group('driving away from a stop', () {
+    test('standing at a stop counts; driving past it does not', () {
+      expect(DrivingLogic.hasStoppedAt(30, accuracy: 10, speed: 0.2), isTrue);
+      expect(DrivingLogic.hasStoppedAt(30, accuracy: 10, speed: 12), isFalse);
+      expect(DrivingLogic.hasStoppedAt(400, speed: 0), isFalse);
+      // A phone that reports no speed is taken at its position.
+      expect(DrivingLogic.hasStoppedAt(30), isTrue);
+    });
+
+    test('leaving means well clear, not GPS drift at the kerb', () {
+      expect(DrivingLogic.hasLeft(90), isFalse);
+      expect(DrivingLogic.hasLeft(160), isTrue);
+      expect(DrivingLogic.hasLeft(160, accuracy: 30), isFalse);
+      expect(DrivingLogic.hasLeft(200, accuracy: 500), isTrue);
+    });
   });
 
   group('delivering out of order', () {
@@ -77,7 +96,12 @@ void main() {
 
     test('after jumping ahead, the nearer of the skipped stop and the one after wins', () {
       // Did s3 first. s4 is 200 m on, s1 is 3 km back: carry on.
-      final carryOn = DrivingLogic.nextAfterDelivery(ids, {}, 's3', metersTo: (id) => id == 's4' ? 200 : 3000);
+      final carryOn = DrivingLogic.nextAfterDelivery(
+        ids,
+        {},
+        's3',
+        metersTo: (id) => id == 's4' ? 200 : 3000,
+      );
       expect(carryOn, 's4');
       // Did s3 on the way past; s1 is right here: go back for it.
       final goBack = DrivingLogic.nextAfterDelivery(ids, {}, 's3', metersTo: (id) => id == 's1' ? 150 : 900);

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'config/infra_config.dart';
 import 'firebase_options.dart';
+import 'notifications/notification_router.dart';
 import 'notifications/push_notifications.dart';
 import 'observability/crash_reporting.dart';
 import 'screens/auth/auth_gate.dart';
@@ -40,6 +41,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Blue Dot',
       debugShowCheckedModeBanner: false,
+      // So a tapped notification can open its run (NotificationRouter).
+      navigatorKey: NotificationRouter.navigatorKey,
       theme: AppTheme.light,
       home: AuthGate(authState: AuthState()),
     );

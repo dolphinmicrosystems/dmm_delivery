@@ -9,6 +9,7 @@ import '../models/run_listing.dart';
 import '../models/run_stop.dart';
 import '../models/run_time.dart';
 import '../services/depot_locator.dart';
+import '../services/run_sheet_pdf.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../widgets/pill_badge.dart';
@@ -92,7 +93,11 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
     final runRef = FirebaseFirestore.instance.collection('delivery_run').doc(widget.runId);
     return Scaffold(
       backgroundColor: AppColors.surfaceMuted,
-      appBar: AppBar(title: Text(widget.routeName, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
+        // The original sheet the owner uploaded for this run.
+        actions: [RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId)],
+      ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: runRef.snapshots(),
         builder: (context, runSnap) {

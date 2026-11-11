@@ -78,7 +78,16 @@ class NotificationChannels {
     importance: Importance.high,
   );
 
-  static const all = [assignments, runs, liveRuns, drivers, status, reminders, load];
+  /// Owners live-tracking a driver: each stop delivered ("Ana delivered:
+  /// Otago Glass"). One per run on the phone - each replaces the last.
+  static const deliveries = AndroidNotificationChannel(
+    'deliveries',
+    'Deliveries',
+    description: 'Each stop delivered by a driver you are live-tracking.',
+    importance: Importance.defaultImportance,
+  );
+
+  static const all = [assignments, runs, liveRuns, drivers, status, reminders, load, deliveries];
 
   /// The channel a pushed notification names, or [assignments] for one that
   /// names none (the manifest's default).
@@ -94,10 +103,19 @@ class NotificationChannels {
   /// The full-colour logo beside the text (`res/drawable-nodpi`).
   static const largeIcon = DrawableResourceAndroidBitmap('bluedot_large');
 
+  /// The truck beside a live run (`res/drawable-nodpi/truck_large.png`).
+  static const truckIcon = DrawableResourceAndroidBitmap('truck_large');
+
   /// Initialises [plugin] and creates every channel. Needed once per isolate:
   /// the background message handler runs in its own.
-  static Future<void> prepare(FlutterLocalNotificationsPlugin plugin) async {
-    await plugin.initialize(settings: const InitializationSettings(android: AndroidInitializationSettings(icon)));
+  ///
+  /// [onTap] gets a tapped notification's payload - in the app's own isolate
+  /// only; a tap always brings the app to the front first.
+  static Future<void> prepare(FlutterLocalNotificationsPlugin plugin, {void Function(String? payload)? onTap}) async {
+    await plugin.initialize(
+      settings: const InitializationSettings(android: AndroidInitializationSettings(icon)),
+      onDidReceiveNotificationResponse: onTap == null ? null : (response) => onTap(response.payload),
+    );
     final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     for (final channel in all) {
       await android?.createNotificationChannel(channel);

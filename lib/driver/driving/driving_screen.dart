@@ -120,6 +120,18 @@ class _DrivingScreenState extends State<DrivingScreen> {
   // turning the voice off and on nor reopening the run repeats it.
   static final _saidNext = <String, String>{};
   static final _saidApproach = <String, String>{};
+  static final _saidArrive = <String, String>{};
+  String? get _announcedArrive => _saidArrive[widget.runId];
+  set _announcedArrive(String? id) =>
+      id == null ? _saidArrive.remove(widget.runId) : _saidArrive[widget.runId] = id;
+
+  /// Where the van stood at each stop it stopped at (DrivingLogic.hasStoppedAt)
+  /// and hasn't delivered: driving away from one asks "Delivered to ...?".
+  final _stoppedAt = <String, Position>{};
+
+  /// Stops already asked about, so each is asked once.
+  final _askedLeft = <String>{};
+  bool _askingLeft = false;
   String? get _announcedNext => _saidNext[widget.runId];
   set _announcedNext(String? id) =>
       id == null ? _saidNext.remove(widget.runId) : _saidNext[widget.runId] = id;
@@ -356,6 +368,69 @@ class _DrivingScreenState extends State<DrivingScreen> {
     _followVan(position);
     _speakIfDue();
     _guide(position);
+    _checkLeftStop(position);
+  }
+
+  /// Stopped at the current stop and then driven away without a tap: ask,
+  /// and answer "delivered" after a few seconds if the driver doesn't - on a
+  /// long run, tapping at every door is the first thing to be forgotten.
+  ///
+  /// Only for a stop the van actually stood at (or "Arrived" was tapped
+  /// for): driving past one is not a delivery.
+  void _checkLeftStop(Position position) {
+    final stop = _current;
+    if (!_started || _finished || stop == null || !stop.located) return;
+    final meters = _metersTo(stop);
+    if (meters == null) return;
+    if (DrivingLogic.hasStoppedAt(meters, accuracy: position.accuracy, speed: position.speed)) {
+      _stoppedAt[stop.id] = position;
+      return;
+    }
+    final wasThere = _stoppedAt.containsKey(stop.id) || _arrived.contains(stop.id);
+    if (!wasThere || _askingLeft || _busy || _askedLeft.contains(stop.id)) return;
+    if (!DrivingLogic.hasLeft(meters, accuracy: position.accuracy)) return;
+    _askedLeft.add(stop.id);
+    _askLeft(stop);
+  }
+
+  Future<void> _askLeft(_Stop stop) async {
+    _askingLeft = true;
+    AppLog.auth('driving: left a stop untapped', {'stopId': stop.id});
+    _voice.say(DrivingLogic.leftLine(stop.stop), urgent: true);
+    final answer = await showDialog<_LeftAnswer>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _LeftStopDialog(
+        name: stop.stop.customerName.isEmpty ? stop.stop.address : stop.stop.customerName,
+        items: stop.stop.itemsSummary,
+        photos: DeliveryWriter.photosAvailable,
+      ),
+    );
+    _askingLeft = false;
+    if (!mounted) return;
+    // Where the van stood, not where it is now: the delivery's position
+    // teaches the backend the drop point.
+    final stood = _stoppedAt[stop.id];
+    switch (answer) {
+      case _LeftAnswer.delivered:
+        await _deliver(stop, withPhoto: false, at: stood, late: true);
+      case _LeftAnswer.photo:
+        await _deliver(stop, withPhoto: true, at: stood, late: true);
+      case _LeftAnswer.timedOut:
+        await _deliver(stop, withPhoto: false, at: stood, late: true, note: DrivingLogic.autoConfirmNote);
+      case _LeftAnswer.notDelivered || null:
+        // Left on purpose: carry on to the next stop. This one stays on the
+        // run, undelivered, and comes round again.
+        setState(() {
+          _targetId =
+              DrivingLogic.nextAfterDelivery(_stopIds, _deliveredIds, stop.id, metersTo: _metersToId) ??
+              stop.id;
+          _targetResolved = true;
+          _resetDirections();
+        });
+        _speakIfDue();
+        _ensureRoute();
+    }
   }
 
   /// Keeps the van in view. Navigating: heading up, close in, the van low on
@@ -486,6 +561,16 @@ class _DrivingScreenState extends State<DrivingScreen> {
       );
       return;
     }
+    // At the stop: what to deliver, and the owner's note. Said over anything
+    // else, since this is the moment it is needed.
+    if (meters != null &&
+        DrivingLogic.isNear(meters, accuracy: _position?.accuracy) &&
+        _announcedArrive != stop.id) {
+      _announcedArrive = stop.id;
+      _announcedApproach = stop.id; // too late for "Approaching"
+      _voice.say(DrivingLogic.arriveLine(stop.stop), urgent: true);
+      return;
+    }
     if (meters != null && meters <= DrivingLogic.approachMeters && _announcedApproach != stop.id) {
       _announcedApproach = stop.id;
       _voice.say(DrivingLogic.approachLine(stop.stop));
@@ -521,7 +606,15 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
   }
 
-  Future<void> _deliver(_Stop stop, {required bool withPhoto}) async {
+  /// [late] is a delivery confirmed after driving away: it is saved from
+  /// where the van stood ([at], possibly unknown), never from where it is now.
+  Future<void> _deliver(
+    _Stop stop, {
+    required bool withPhoto,
+    Position? at,
+    bool late = false,
+    String? note,
+  }) async {
     Uint8List? photo;
     if (withPhoto) {
       final picked = await ImagePicker().pickImage(
@@ -549,7 +642,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
       }
     }
     await _attempt('save the delivery', () async {
-      await _writer.delivered(stop.id, position: _position, photo: photo);
+      await _writer.delivered(stop.id, position: late ? at : _position, photo: photo, note: note);
+      _stoppedAt.remove(stop.id);
       // Where next: the planned order, unless stops are being done out of
       // it - then the nearer of the earliest one skipped and the one after
       // this. Decided here, once, so it doesn't swap as the van moves.
@@ -1527,6 +1621,93 @@ class _DrivePanel extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+enum _LeftAnswer { delivered, photo, notDelivered, timedOut }
+
+/// "Delivered to Otago Glass?" after driving away from a stop without a tap.
+/// Counts down and answers "delivered" by itself, so a driver with their
+/// hands on the wheel needn't touch the phone.
+class _LeftStopDialog extends StatefulWidget {
+  const _LeftStopDialog({required this.name, required this.items, required this.photos});
+
+  final String name;
+  final String items;
+  final bool photos;
+
+  @override
+  State<_LeftStopDialog> createState() => _LeftStopDialogState();
+}
+
+class _LeftStopDialogState extends State<_LeftStopDialog> {
+  int _left = DrivingLogic.autoConfirmSeconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_left <= 1) {
+        _close(_LeftAnswer.timedOut);
+      } else {
+        setState(() => _left--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _close(_LeftAnswer answer) {
+    _timer?.cancel();
+    Navigator.of(context).pop(answer);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Delivered to ${widget.name}?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.items.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(widget.items, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ),
+          Text("You drove away without marking it. It will be marked delivered in $_left s."),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () => _close(_LeftAnswer.delivered),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+            child: Text('Yes, delivered ($_left)'),
+          ),
+          if (widget.photos) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => _close(_LeftAnswer.photo),
+              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+              icon: const Icon(Icons.photo_camera_rounded),
+              label: const Text('Yes, and add a photo'),
+            ),
+          ],
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => _close(_LeftAnswer.notDelivered),
+            style: TextButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              foregroundColor: AppColors.danger,
+            ),
+            child: const Text('No, not delivered'),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -58,7 +58,12 @@ class RoutePreviewMap extends StatefulWidget {
     this.onToggleExpanded,
     this.attributionAtTop = false,
     this.deliveredIds = const {},
+    this.van,
   });
+
+  /// Where the driver's van last reported being (the run's heartbeat), on a
+  /// run being driven: drawn as a truck above everything else.
+  final LatLng? van;
 
   final List<RunStop> stops;
 
@@ -325,6 +330,21 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
             // that has to be legible, for as long as they are asking.
             for (var i = 0; i < widget.stops.length; i++)
               if (widget.stops[i].id == highlightedId) _stopMarker(i),
+            if (widget.van case final van?)
+              Marker(
+                point: van,
+                width: 46,
+                height: 46,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.brand,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 3),
+                    boxShadow: const [BoxShadow(color: Color(0x40000000), blurRadius: 6)],
+                  ),
+                  child: const Icon(Icons.local_shipping_rounded, color: Colors.white, size: 22),
+                ),
+              ),
           ],
         ),
         _MapControls(

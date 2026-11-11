@@ -5,7 +5,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../../util/app_log.dart';
 
-/// The driving screen's "still here", about once a minute while a run is
+/// The driving screen's "still here", every 15 seconds while a run is
 /// under way: `run_live/{runId}` - {owner_uid, rider_id, last_seen_at, and
 /// where the van is}.
 ///
@@ -24,7 +24,8 @@ import '../../util/app_log.dart';
 class RunHeartbeat {
   RunHeartbeat({required this.runId, required this.ownerUid, required this.riderId});
 
-  static const every = Duration(minutes: 1);
+  /// Often enough for the owner's live map to show the van moving.
+  static const every = Duration(seconds: 15);
 
   final String runId;
   final String ownerUid;

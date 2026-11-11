@@ -64,8 +64,9 @@ class DriverDetailScreen extends StatelessWidget {
             SwitchSettingCard(
               title: 'Live track ${invitation.displayName}',
               subtitle:
-                  'A notification that follows their run while they drive: how many are delivered, '
-                  'the next stop and whether they are on time.',
+                  'While they drive: a live notification with a truck showing how far along the run '
+                  'is, and a notification for each stop delivered, with or without a photo. '
+                  'You are told when any driver starts a run either way.',
               value: SettingsStore(authState).liveTrackFor(uid),
               onChanged: (on) => SettingsStore(authState).setLiveTrackFor(uid, on),
               what: 'live tracking',

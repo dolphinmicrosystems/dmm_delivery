@@ -439,8 +439,15 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
       - **One folder per run** (`{ownerUid}/{runId}/{stopId}.jpg`, with `run_id`/`stop_id` metadata).
       - **The owner** sees them on the run: "Delivery photos (n)" opens `RunPhotosScreen` (a grid in route
         order; tap to zoom). The header also shows started / finished / total time.
+    - **Driving away without a tap** (`_checkLeftStop`): a stop the van stood at (`DrivingLogic.hasStoppedAt`:
+      in the arrive radius at under 1.5 m/s, or Arrived tapped) and then left by 150 m + accuracy (`hasLeft`)
+      asks "Delivered to …?" once, with a 10 s countdown (`_LeftStopDialog`). Yes / Yes with a photo / No.
+      Unanswered, it is marked delivered with `rider_note` = `DrivingLogic.autoConfirmNote` (the owner's run
+      screen shows "· auto" beside the time). Saved from where the van stood, never where it is now, since
+      the position teaches the drop point. "No" moves on to the next stop; the stop stays undelivered.
     - **Voice** (`VoiceGuide`, `flutter_tts`, the phone's own engine): the start line, "Next: … 600 metres
-      north-east" once per stop, then "Approaching …" with the items and instructions within 150 m. The text
+      north-east" once per stop, "Approaching …" within 150 m, then on arrival (the arrive radius) "You have
+      arrived at … Deliver 2 Trim 2L … <the owner's note>" (`arriveLine`, urgent). The text
       and thresholds are in `DrivingLogic` (tested in `test/driving_logic_test.dart`). Mute on the map or in
       Settings → Voice prompts (`user_settings.voice_prompts`). The voice button on the map (next to
       "Follow me") switches it on or off; turning it on says the next stop at once.
@@ -518,6 +525,13 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     card, when `DriverSchedule.scheduledToday`. It writes `run_starts/{id}` and waits for the backend's
     `start-route-run` to answer with a run (today's sheet, or a copy of the last one), then opens the
     driving screen.
+  - **The original run sheet (PDF)** (`lib/services/run_sheet_pdf.dart`): the PDF icon on each Routes-tab row, on
+    the route and run screens' app bars, and on the owner's run screen. It downloads the sheet from
+    `InfraConfig.runSheetsBucket` to the temp folder and opens it in the phone's PDF viewer (`open_filex`).
+    The path comes from the run (`delivery_run.source_object`; a copied run carries its source's), else the
+    route card (`circuits.sheet_object`, written by the backend's confirm). The backend's `storage.rules` let
+    a driver `get` a sheet whose `ownerUid` metadata is their own business; routes confirmed before this need
+    `tool/backfill_sheet_pdfs.py --apply` there.
   - **Tap a stop** on any driver map or list for `showStopDetails` (`lib/widgets/stop_details_sheet.dart`):
     name, address, items, instructions, phone, and the delivery time and photo once delivered. The route
     view reads items and instructions from the route card.
@@ -584,6 +598,18 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     - The old Online switch and the driver's own ongoing "You're online" are gone;
       `PresenceNotification.clear()` removes one left in the shade by an earlier build.
     - A phone that dies without leaving the app stays "online" until it is next opened and left.
+  - **Live tracking a driver** (owner's choice per driver, `user_settings.live_track_drivers`, the switch on the
+    driver's page; "X started ..." goes to every owner regardless):
+    - the live notification below, with a truck (`truck_large` beside it; pulled open, `LiveRunArt` draws the
+      truck part-way along a track with the `image` package, since the background isolate has no widgets);
+    - "Ana delivered: Otago Glass" per stop (channel `deliveries`, one per run - the push's tag), saying photo
+      / no photo / marked automatically;
+    - **a tap opens the run's live map** (`NotificationRouter`: local payloads, `onMessageOpenedApp`, and
+      cold starts, held until someone is signed in; `MaterialApp.navigatorKey`). Owners only.
+    - **The live map is `RunDetailScreen`:** the van from `run_live` (`RoutePreviewMap.van`; the heartbeat is
+      now every 15 s), delivered stops ticked, and a delivered stop opens when/how/photo (`showStopDetails`
+      with `deliveryNote`), with "Edit instructions" a tap further.
+    - **Runs → Live tab** lists every run on the road (`_LiveList`, the same `LiveRunCard`s as Home).
   - **The live run notification** is sent as data, and the app draws it (`LiveRunNotification`). It is ongoing,
     shows a progress bar and a chronometer from the run's start, uses the run id as its tag (so each run
     updates in place), and times out 30 minutes after its last update so it can't get stuck. When the app

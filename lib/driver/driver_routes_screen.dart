@@ -1,3 +1,4 @@
+import '../services/run_sheet_pdf.dart';
 import 'package:flutter/material.dart';
 
 import '../models/driver_stats.dart';
@@ -91,6 +92,8 @@ class DriverRoutesScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                // Each route's original run sheet, straight from the list.
+                RunSheetPdfButton(routeName: route.name, roundKey: route.roundKey),
                 if (from != null)
                   PillBadge(
                     label: 'From ${relativeDayLabel(from, now)}',

@@ -10,11 +10,13 @@ import '../../models/run_stop.dart';
 import '../../models/run_time.dart';
 import '../../models/run_timing.dart';
 import '../../services/depot_locator.dart';
+import '../../services/run_sheet_pdf.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/map_with_sheet.dart';
 import '../../widgets/route_preview_map.dart';
 import '../../widgets/run_timing_pill.dart';
+import '../../widgets/stop_details_sheet.dart';
 import '../../widgets/stop_instructions_sheet.dart';
 import 'owner_run_data.dart';
 import 'run_load_screen.dart';
@@ -88,7 +90,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
   Widget build(BuildContext context) {
     final runRef = FirebaseFirestore.instance.collection('delivery_run').doc(widget.runId);
     return Scaffold(
-      appBar: AppBar(title: Text(widget.routeName, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
+        actions: [RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId)],
+      ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: runRef.snapshots(),
         builder: (context, runSnap) {
@@ -148,7 +153,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                           return ListTile(
                             onTap: () {
                               setState(() => _highlight = StopHighlight.after(_highlight, doc.id));
-                              _openStop(doc);
+                              _openStop(doc, index);
                             },
                             leading: StopPin(number: index, compact: true, delivered: isDone),
                             title: Text(
@@ -189,7 +194,11 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                                       ),
                                       if (at != null)
                                         Text(
-                                          formatClock(at.hour, at.minute),
+                                          // Marked by the driving screen's countdown
+                                          // after the van drove away, not by a tap.
+                                          data['rider_note'] is String
+                                              ? '${formatClock(at.hour, at.minute)} · auto'
+                                              : formatClock(at.hour, at.minute),
                                           style: const TextStyle(fontSize: 11, color: AppColors.inkMuted),
                                         ),
                                     ],
@@ -198,18 +207,31 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                           );
                   }
 
-                  // Swipe the list down for the whole map.
-                  return MapWithSheet(
-                    map: RoutePreviewMap(
-                      stops: stops,
-                      depot: depotSnap.data,
-                      highlight: _highlight,
-                      roadLegs: _roadLegsFor(run),
-                      deliveredIds: delivered,
-                      attributionAtTop: true,
-                      onStopTap: (index) => _openStop(byId[stops[index].id]),
-                    ),
-                    children: [for (var index = 0; index <= docs.length; index++) row(index)],
+                  // Swipe the list down for the whole map. While the run is
+                  // being driven, the van is on it: where the driving screen
+                  // last reported being (run_live, every 15 s).
+                  final underway = listing.started != null && listing.finished == null;
+                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: underway
+                        ? FirebaseFirestore.instance.collection('run_live').doc(widget.runId).snapshots()
+                        : null,
+                    builder: (context, liveSnap) {
+                      final live = liveSnap.data?.data();
+                      final lat = (live?['lat'] as num?)?.toDouble(), lng = (live?['lng'] as num?)?.toDouble();
+                      return MapWithSheet(
+                        map: RoutePreviewMap(
+                          stops: stops,
+                          depot: depotSnap.data,
+                          highlight: _highlight,
+                          roadLegs: _roadLegsFor(run),
+                          deliveredIds: delivered,
+                          van: underway && lat != null && lng != null ? LatLng(lat, lng) : null,
+                          attributionAtTop: true,
+                          onStopTap: (index) => _openStop(byId[stops[index].id], stops.indexOf(stops[index]) + 1),
+                        ),
+                        children: [for (var index = 0; index <= docs.length; index++) row(index)],
+                      );
+                    },
                   );
                 },
               );
@@ -220,8 +242,32 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     );
   }
 
-  void _openStop(QueryDocumentSnapshot<Map<String, dynamic>>? stop) {
+  /// A delivered stop opens what happened there - when, how, and the driver's
+  /// photo - with the instructions a tap further; one still to do opens its
+  /// instructions straight away.
+  void _openStop(QueryDocumentSnapshot<Map<String, dynamic>>? stop, [int? number]) {
     if (stop == null) return;
+    final data = stop.data();
+    if (data['status'] == 'delivered') {
+      showStopDetails(
+        context,
+        number: number ?? 0,
+        customerName: data['customer_name'] as String? ?? '',
+        address: data['address'] as String? ?? '',
+        items: RunStop.fromDoc(stop)?.items ?? const [],
+        instructions: data['instructions'] as String?,
+        deliveredAt: (data['delivered_at'] as Timestamp?)?.toDate().toLocal(),
+        photoUrl: data['pod_photo_url'] as String?,
+        deliveryNote: data['rider_note'] as String?,
+        actionLabel: 'Edit instructions',
+        onAction: () => _editInstructions(stop),
+      );
+      return;
+    }
+    _editInstructions(stop);
+  }
+
+  void _editInstructions(QueryDocumentSnapshot<Map<String, dynamic>> stop) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,

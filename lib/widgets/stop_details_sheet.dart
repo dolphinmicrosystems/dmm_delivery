@@ -19,6 +19,7 @@ Future<void> showStopDetails(
   String? phone,
   DateTime? deliveredAt,
   String? photoUrl,
+  String? deliveryNote,
   String? missingItemsNote,
   String? actionLabel,
   VoidCallback? onAction,
@@ -76,6 +77,16 @@ Future<void> showStopDetails(
                   ),
                 ],
               ),
+            ],
+            // How, when it wasn't a tap at the door: "Marked delivered
+            // automatically after driving away".
+            if (deliveredAt != null && deliveryNote != null && deliveryNote.trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(deliveryNote.trim(), style: const TextStyle(fontSize: 13, color: AppColors.inkMuted)),
+            ],
+            if (deliveredAt != null && photoUrl == null) ...[
+              const SizedBox(height: 4),
+              const Text('No photo was taken.', style: TextStyle(fontSize: 13, color: AppColors.inkMuted)),
             ],
             if (photoUrl != null) ...[
               const SizedBox(height: 12),
