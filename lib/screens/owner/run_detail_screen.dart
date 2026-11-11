@@ -18,6 +18,7 @@ import '../../widgets/route_preview_map.dart';
 import '../../widgets/run_timing_pill.dart';
 import '../../widgets/stop_details_sheet.dart';
 import '../../widgets/stop_instructions_sheet.dart';
+import '../../widgets/stop_search_delegate.dart';
 import 'owner_run_data.dart';
 import 'run_load_screen.dart';
 import 'run_photos_screen.dart';
@@ -57,6 +58,20 @@ class RunDetailScreen extends StatefulWidget {
 
 class _RunDetailScreenState extends State<RunDetailScreen> {
   StopHighlight? _highlight;
+
+  /// The stops as last streamed, for "Find a stop" in the app bar - which
+  /// sits outside the streams.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _docs = const [];
+
+  /// Search every stop, then do what tapping its row does: pulse the pin
+  /// (panning to it) and open the stop - its photo and time once delivered.
+  Future<void> _findStop() async {
+    final docs = _docs;
+    final index = await searchForStop(context, [for (final doc in docs) RunStop.searchable(doc.id, doc.data())]);
+    if (index == null || !mounted || index >= docs.length) return;
+    setState(() => _highlight = StopHighlight.after(_highlight, docs[index].id));
+    _openStop(docs[index], index + 1);
+  }
   Future<LatLng?>? _depotFuture;
   String? _depotAddress;
 
@@ -92,7 +107,10 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
-        actions: [RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId)],
+        actions: [
+          IconButton(tooltip: 'Find a stop', icon: const Icon(Icons.search_rounded), onPressed: _findStop),
+          RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId),
+        ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: runRef.snapshots(),
@@ -108,6 +126,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                 for (final doc in stopsSnap.data!.docs)
                   if (doc.data()['excluded'] != true) doc,
               ];
+              _docs = docs;
               final stops = [for (final doc in docs) ?RunStop.fromDoc(doc)];
               final byId = {for (final doc in docs) doc.id: doc};
               final delivered = {

@@ -16,6 +16,7 @@ import '../widgets/pill_badge.dart';
 import '../widgets/map_with_sheet.dart';
 import '../widgets/route_preview_map.dart';
 import '../widgets/stop_details_sheet.dart';
+import '../widgets/stop_search_delegate.dart';
 import '../widgets/surface_card.dart';
 import 'driver_runs_screen.dart';
 import 'driving/driving_screen.dart';
@@ -51,6 +52,23 @@ class DriverRunScreen extends StatefulWidget {
 
 class _DriverRunScreenState extends State<DriverRunScreen> {
   StopHighlight? _highlight;
+
+  /// The stops as last streamed, for "Find a stop" in the app bar - which
+  /// sits outside the streams.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _docs = const [];
+
+  /// Search every stop, then do what tapping its row does: pulse the pin
+  /// (panning to it) and open what to deliver there.
+  Future<void> _findStop() async {
+    final docs = _docs;
+    final index = await searchForStop(context, [
+      for (final doc in docs) RunStop.searchable(doc.id, doc.data()),
+    ]);
+    if (index == null || !mounted || index >= docs.length) return;
+    setState(() => _highlight = StopHighlight.after(_highlight, docs[index].id));
+    _showStop(index + 1, docs[index].data());
+  }
+
   Future<LatLng?>? _depotFuture;
   Object? _roadLegsSource;
   RoadLegs _roadLegs = const RoadLegs();
@@ -95,8 +113,11 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
       backgroundColor: AppColors.surfaceMuted,
       appBar: AppBar(
         title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
-        // The original sheet the owner uploaded for this run.
-        actions: [RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId)],
+        actions: [
+          IconButton(tooltip: 'Find a stop', icon: const Icon(Icons.search_rounded), onPressed: _findStop),
+          // The original sheet the owner uploaded for this run.
+          RunSheetPdfButton(routeName: widget.routeName, runId: widget.runId),
+        ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: runRef.snapshots(),
@@ -115,6 +136,7 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                 for (final doc in stopsSnap.data!.docs)
                   if (doc.data()['excluded'] != true) doc,
               ];
+              _docs = docs;
               final stops = [for (final doc in docs) ?RunStop.fromDoc(doc)];
               final listing = RunListing.fromMap(widget.runId, run ?? const {}, routeName: widget.routeName);
               final delivered = {

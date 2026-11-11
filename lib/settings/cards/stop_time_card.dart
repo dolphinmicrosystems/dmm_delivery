@@ -36,8 +36,9 @@ class StopTimeCard extends StatelessWidget {
               const Text('Time at each stop', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               const Text(
-                'Used in route time estimates until your drivers have delivered to '
-                'an address a few times - then its own average is used.',
+                'Multiplied by every stop, so it shapes each route\'s time the most. '
+                'Your routes update when you change it. Once drivers have delivered '
+                'to an address a few times, its own average is used.',
                 style: TextStyle(fontSize: 12, color: AppColors.inkMuted, height: 1.4),
               ),
               const SizedBox(height: 12),

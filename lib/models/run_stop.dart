@@ -57,8 +57,18 @@ class RunStop {
   /// rather than checking `items` and formatting separately.
   String get itemsSummary => [for (final item in items) item.label].join(' · ');
 
-  static RunStop? fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data();
+  static RunStop? fromDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) => fromData(doc.id, doc.data());
+
+  /// Every stop, pinned or not, for searching (stop_search.dart) - which
+  /// reads names, addresses and products, never the location. A stop without
+  /// a pin is still one a driver may need to find by name.
+  static RunStop searchable(String id, Map<String, dynamic> data) =>
+      fromData(id, data, unpinned: const LatLng(0, 0))!;
+
+  /// A stop from a `delivery_stop` document's fields - or from a route card's
+  /// `stops_summary` entry, which uses the same names. [unpinned] stands in
+  /// for a missing location; without it such a stop is null.
+  static RunStop? fromData(String id, Map<String, dynamic> data, {LatLng? unpinned}) {
     final lat = (data['lat'] as num?)?.toDouble();
     final lng = (data['lng'] as num?)?.toDouble();
     // A stop that never geocoded has no place on a map and no meaningful
@@ -66,14 +76,15 @@ class RunStop {
     // consumer (polyline, pins, reorder) free of null checks, at the cost
     // of a stop the owner can't see - which the review screen calls out
     // explicitly rather than silently swallowing.
-    if (lat == null || lng == null) return null;
+    final location = lat != null && lng != null ? LatLng(lat, lng) : unpinned;
+    if (location == null) return null;
 
     return RunStop(
-      id: doc.id,
+      id: id,
       seqOrder: (data['seq_order'] as num?)?.toInt() ?? 0,
       customerName: data['customer_name'] as String? ?? '',
       address: data['address'] as String? ?? '',
-      location: LatLng(lat, lng),
+      location: location,
       items: [
         for (final item in (data['items'] as List?) ?? const [])
           if (item is Map) StopItem.fromMap(item.cast<String, dynamic>()),

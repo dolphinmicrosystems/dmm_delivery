@@ -44,7 +44,7 @@ class _StopSearchDelegate extends SearchDelegate<int?> {
 
   Widget _results(BuildContext context) {
     if (query.trim().isEmpty) {
-      return _Hint('${stops.length} stops on this run. Search by customer, street, order number or product.');
+      return _Hint('${stops.length} stops. Search by customer, street, order number or product.');
     }
     final matches = searchStops(stops, query);
     if (matches.isEmpty) return _Hint('No stop matches “${query.trim()}”.');

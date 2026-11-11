@@ -12,6 +12,7 @@ import '../util/app_log.dart';
 import '../widgets/map_with_sheet.dart';
 import '../widgets/route_preview_map.dart';
 import '../widgets/stop_details_sheet.dart';
+import '../widgets/stop_search_delegate.dart';
 import '../widgets/surface_card.dart';
 import 'route_starter.dart';
 
@@ -117,14 +118,42 @@ class _DriverRouteScreenState extends State<DriverRouteScreen> {
     );
   }
 
+  /// Search every stop on the card - pinned or not - then do what tapping its
+  /// row does: pulse the pin (panning to it) and open what to deliver there.
+  Future<void> _findStop(_Route route) async {
+    final all = [
+      for (final (index, stop) in route.summary.indexed)
+        RunStop.searchable('${stop['address_key']}-$index', stop),
+    ];
+    final index = await searchForStop(context, all);
+    if (index == null || !mounted || index >= route.summary.length) return;
+    final stop = route.summary[index];
+    final pinned = route.stops.where((s) => s.addressKey == stop['address_key']);
+    if (pinned.isNotEmpty) setState(() => _highlight = StopHighlight.after(_highlight, pinned.first.id));
+    _showStop(index + 1, stop);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.surfaceMuted,
       appBar: AppBar(
         title: Text(widget.routeName, overflow: TextOverflow.ellipsis),
-        // The route's latest run sheet, as the owner uploaded it.
-        actions: [RunSheetPdfButton(routeName: widget.routeName, roundKey: widget.roundKey)],
+        actions: [
+          // Shown once the route has loaded - there is nothing to search before.
+          FutureBuilder<_Route?>(
+            future: _route,
+            builder: (context, snapshot) => snapshot.data == null
+                ? const SizedBox.shrink()
+                : IconButton(
+                    tooltip: 'Find a stop',
+                    icon: const Icon(Icons.search_rounded),
+                    onPressed: () => _findStop(snapshot.data!),
+                  ),
+          ),
+          // The route's latest run sheet, as the owner uploaded it.
+          RunSheetPdfButton(routeName: widget.routeName, roundKey: widget.roundKey),
+        ],
       ),
       body: FutureBuilder<_Route?>(
         future: _route,

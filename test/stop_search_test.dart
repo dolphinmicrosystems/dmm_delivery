@@ -111,4 +111,18 @@ void main() {
 
     expect(picked, isNull);
   });
+
+  test('a stop the map could not pin is still searchable, products and all', () {
+    // A route card entry: no lat/lng, items as the sheet listed them.
+    final unpinned = RunStop.searchable('k-0', {
+      'customer_name': 'Hill Top Cafe',
+      'address': '3 Kaikorai Valley Road, Dunedin',
+      'items': [
+        {'code': '80', 'product': '2 L Standard Milk', 'quantity': 4, 'crates': 0, 'loose': 4},
+      ],
+    });
+    final found = searchStops([..._run, unpinned], 'standard milk');
+    expect([for (final m in found) m.stop.customerName], ['Hill Top Cafe']);
+    expect(RunStop.fromData('k-0', {'customer_name': 'Hill Top Cafe'}), isNull);
+  });
 }

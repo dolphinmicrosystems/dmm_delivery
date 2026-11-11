@@ -14,7 +14,7 @@ class StopTime {
   static const fallbackSeconds = 60;
   static const minSeconds = 15;
   static const maxSeconds = 900;
-  static const presetSeconds = [60, 120, 180, 300];
+  static const presetSeconds = [30, 60, 120, 180, 300];
 
   static int sanitize(Object? raw) {
     final seconds = (raw as num?)?.toInt();
