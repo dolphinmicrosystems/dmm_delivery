@@ -16,10 +16,11 @@ import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
 import '../../widgets/pill_badge.dart';
 import '../../widgets/section_label.dart';
-import '../../widgets/stat_tile.dart';
 import '../../widgets/schedule_run_sheet.dart';
+import '../../widgets/driving_record.dart';
 import '../../widgets/surface_card.dart';
 import 'route_map_screen.dart';
+import 'run_detail_screen.dart';
 
 /// One driver: who they are, their driving record, the routes they drive,
 /// the vehicle they drive, and their recent runs.
@@ -81,7 +82,20 @@ class DriverDetailScreen extends StatelessWidget {
               what: 'driver presence alert',
             ),
             const SizedBox(height: 20),
-            _Record(ownerUid: ownerUid, driverUid: uid),
+            DrivingRecord(
+              ownerUid: ownerUid,
+              driverUid: uid,
+              onOpenRun: (run) => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => RunDetailScreen(
+                    authState: authState,
+                    runId: run.runId,
+                    routeName: run.routeName ?? 'Run',
+                    driver: invitation.displayName,
+                  ),
+                ),
+              ),
+            ),
             const SizedBox(height: 20),
             _Schedule(authState: authState, driver: invitation),
             const SizedBox(height: 20),
@@ -143,118 +157,6 @@ class _Header extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Days driven, runs, average time and stops - and the recent runs behind them.
-class _Record extends StatelessWidget {
-  const _Record({required this.ownerUid, required this.driverUid});
-
-  final String ownerUid;
-  final String driverUid;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('driver_stats')
-          .doc(DriverStats.documentId(ownerUid, driverUid))
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          AppLog.owner.error('driver stats stream failed', snapshot.error, snapshot.stackTrace);
-        }
-        final stats = snapshot.hasData ? DriverStats.fromSnapshot(snapshot.data!) : DriverStats.empty;
-        final year = DateTime.now().year;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SectionLabel('Driving record'),
-            const SizedBox(height: 8),
-            SurfaceCard(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: StatTile(value: '${stats.daysDriven}', label: 'Days driven')),
-                      Expanded(child: StatTile(value: '${stats.runsCompleted}', label: 'Runs')),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: StatTile(
-                          value: stats.averageDuration == null ? '—' : DeliveryEstimate.format(stats.averageDuration!),
-                          label: 'Avg run time',
-                        ),
-                      ),
-                      Expanded(child: StatTile(value: '${stats.totalStopsDelivered}', label: 'Stops delivered')),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Text(
-                      stats.hasHistory
-                          ? 'Driving since ${formatShortDate(stats.firstRunDate!, thisYear: year)} · last run '
-                                '${formatShortDate(stats.lastRunDate!, thisYear: year)}. Run time is from the '
-                                'first stop delivered to the last.'
-                          : 'No completed runs yet. The record starts once a run they drive is fully delivered.',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 11.5, color: AppColors.inkMuted, height: 1.4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (stats.recentRuns.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              const SectionLabel('Recent runs'),
-              const SizedBox(height: 8),
-              SurfaceCard(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Column(
-                  children: [
-                    for (final (i, run) in stats.recentRuns.indexed) ...[
-                      if (i > 0) const Divider(height: 1, indent: 16, endIndent: 16, color: AppColors.hairline),
-                      _RunRow(run: run, thisYear: year),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RunRow extends StatelessWidget {
-  const _RunRow({required this.run, required this.thisYear});
-
-  final CompletedRun run;
-  final int thisYear;
-
-  @override
-  Widget build(BuildContext context) {
-    final details = [
-      '${run.stopsDelivered} stops',
-      DeliveryEstimate.format(run.duration),
-      if (run.vehicleName != null) run.vehicleName!,
-    ].join(' · ');
-    return ListTile(
-      dense: true,
-      leading: const Icon(Icons.check_circle_outline_rounded, color: AppColors.success),
-      title: Text(
-        '${run.date == null ? 'Unknown date' : formatShortDate(run.date!, thisYear: thisYear)} · '
-        '${run.routeName ?? 'Route'}',
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(details),
     );
   }
 }

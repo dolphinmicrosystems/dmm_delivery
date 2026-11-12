@@ -7,6 +7,7 @@ import '../../models/driver_stats.dart';
 import '../../models/road_legs.dart';
 import '../../models/run_listing.dart';
 import '../../models/run_stop.dart';
+import '../../models/run_summary.dart';
 import '../../models/run_time.dart';
 import '../../models/run_timing.dart';
 import '../../services/depot_locator.dart';
@@ -15,7 +16,9 @@ import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/map_with_sheet.dart';
 import '../../widgets/route_preview_map.dart';
+import '../../widgets/run_summary_card.dart';
 import '../../widgets/run_timing_pill.dart';
+import '../../widgets/run_track_watcher.dart';
 import '../../widgets/stop_details_sheet.dart';
 import '../../widgets/stop_instructions_sheet.dart';
 import '../../widgets/stop_search_delegate.dart';
@@ -56,7 +59,7 @@ class RunDetailScreen extends StatefulWidget {
   State<RunDetailScreen> createState() => _RunDetailScreenState();
 }
 
-class _RunDetailScreenState extends State<RunDetailScreen> {
+class _RunDetailScreenState extends State<RunDetailScreen> with RunTrackWatcher {
   StopHighlight? _highlight;
 
   /// The stops as last streamed, for "Find a stop" in the app bar - which
@@ -134,13 +137,17 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                   if (doc.data()['status'] == 'delivered') doc.id,
               };
               final listing = RunListing.fromMap(widget.runId, run ?? const {}, routeName: widget.routeName);
+              // The path driven: live while the run is under way, and in the
+              // summary once it is done.
+              final done = listing.finished != null;
+              if (listing.started != null) watchTrack(widget.runId);
 
               return FutureBuilder<LatLng?>(
                 future: _depot(run),
                 builder: (context, depotSnap) {
                   Widget row(int index) {
                           if (index == 0) {
-                            return _Header(
+                            final header = _Header(
                               ownerUid: widget.authState.ownerUid ?? '',
                               listing: listing,
                               driver: widget.driver,
@@ -163,6 +170,23 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                                   ),
                                 ),
                               ),
+                            );
+                            if (!done) return header;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                header,
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                  child: RunSummaryCard(
+                                    summary: RunSummary.from(
+                                      listing: listing,
+                                      stops: [for (final doc in docs) doc.data()],
+                                      track: track,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             );
                           }
                           final doc = docs[index - 1];
@@ -244,6 +268,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
                           highlight: _highlight,
                           roadLegs: _roadLegsFor(run),
                           deliveredIds: delivered,
+                          driven: track.points,
                           van: underway && lat != null && lng != null ? LatLng(lat, lng) : null,
                           attributionAtTop: true,
                           onStopTap: (index) => _openStop(byId[stops[index].id], stops.indexOf(stops[index]) + 1),

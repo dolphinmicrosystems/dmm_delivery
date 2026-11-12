@@ -59,7 +59,12 @@ class RoutePreviewMap extends StatefulWidget {
     this.attributionAtTop = false,
     this.deliveredIds = const {},
     this.van,
+    this.driven = const [],
   });
+
+  /// The path the van actually drove (run_track), once a run is done: drawn
+  /// in green over the planned route, which fades back behind it.
+  final List<LatLng> driven;
 
   /// Where the driver's van last reported being (the run's heartbeat), on a
   /// run being driven: drawn as a truck above everything else.
@@ -302,7 +307,7 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
           polylines: [
             Polyline(
               points: points,
-              color: AppColors.brand,
+              color: widget.driven.length < 2 ? AppColors.brand : AppColors.brand.withValues(alpha: 0.35),
               strokeWidth: 4,
               // A white casing lifts the line off the basemap's own roads,
               // the same pale grey a thin blue line otherwise sinks into.
@@ -311,6 +316,16 @@ class _RoutePreviewMapState extends State<RoutePreviewMap> {
               strokeCap: StrokeCap.round,
               strokeJoin: StrokeJoin.round,
             ),
+            if (widget.driven.length >= 2)
+              Polyline(
+                points: widget.driven,
+                color: AppColors.success,
+                strokeWidth: 5,
+                borderColor: Colors.white,
+                borderStrokeWidth: 2,
+                strokeCap: StrokeCap.round,
+                strokeJoin: StrokeJoin.round,
+              ),
           ],
         ),
         MarkerLayer(

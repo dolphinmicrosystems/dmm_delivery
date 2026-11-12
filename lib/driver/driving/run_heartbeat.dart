@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 
+import '../../models/run_track.dart';
 import '../../util/app_log.dart';
 
 /// The driving screen's "still here", every 15 seconds while a run is
@@ -17,6 +19,12 @@ import '../../util/app_log.dart';
 /// A document of its own rather than a field on the run, so a beat doesn't
 /// wake the run's triggers (notify-run, refresh-run) every minute. Only the
 /// run's driver may write it, at server time (firestore.rules).
+///
+/// It also records the path driven: [record] keeps a point each time the van
+/// has moved [RunTrack.minStepMeters], and each beat appends the points kept
+/// since the last one to `run_track/{runId}` - the line the run's summary
+/// draws over the planned route. A document of its own so the owner's live
+/// map, which streams run_live, isn't sent the whole path every 15 seconds.
 ///
 /// It beats only while the driving screen is open: a closed app, a dead
 /// battery and lost signal all look the same from here - silence - which is
@@ -34,6 +42,15 @@ class RunHeartbeat {
   Timer? _timer;
   bool _failedOnce = false;
 
+  /// Points kept and not yet written, the last one kept, and how many so far.
+  final List<Map<String, Object>> _pending = [];
+  LatLng? _lastKept;
+  int _kept = 0;
+
+  late final DocumentReference<Map<String, dynamic>> _track = FirebaseFirestore.instance
+      .collection('run_track')
+      .doc(runId);
+
   late final DocumentReference<Map<String, dynamic>> _doc = FirebaseFirestore.instance
       .collection('run_live')
       .doc(runId);
@@ -43,7 +60,9 @@ class RunHeartbeat {
   void start({required Position? Function() position, required bool Function() active}) {
     if (_timer != null) return;
     void tick() {
-      if (active()) _beat(position());
+      if (!active()) return;
+      _beat(position());
+      flushTrack();
     }
 
     tick();
@@ -53,6 +72,34 @@ class RunHeartbeat {
   void stop() {
     _timer?.cancel();
     _timer = null;
+    flushTrack();
+  }
+
+  /// A new fix from the driving screen, while the run is under way.
+  void record(Position here) {
+    final point = LatLng(here.latitude, here.longitude);
+    if (_kept >= RunTrack.maxPoints || !RunTrack.keeps(_lastKept, point, accuracy: here.accuracy)) return;
+    _lastKept = point;
+    _kept++;
+    _pending.add({'lat': here.latitude, 'lng': here.longitude, 't': here.timestamp.millisecondsSinceEpoch});
+  }
+
+  /// Writes the points kept since the last write. Not awaited by callers:
+  /// offline, the write waits in Firestore's queue and goes with signal.
+  void flushTrack() {
+    if (_pending.isEmpty) return;
+    final points = List.of(_pending);
+    _pending.clear();
+    _track
+        .set({
+          'owner_uid': ownerUid,
+          'rider_id': riderId,
+          'updated_at': FieldValue.serverTimestamp(),
+          'points': FieldValue.arrayUnion(points),
+        }, SetOptions(merge: true))
+        .catchError((Object error, StackTrace stack) {
+          AppLog.auth.error('track write failed', error, stack);
+        });
   }
 
   Future<void> _beat(Position? here) async {

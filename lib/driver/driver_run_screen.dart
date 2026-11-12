@@ -7,6 +7,7 @@ import '../models/driver_stats.dart';
 import '../models/road_legs.dart';
 import '../models/run_listing.dart';
 import '../models/run_stop.dart';
+import '../models/run_summary.dart';
 import '../models/run_time.dart';
 import '../services/depot_locator.dart';
 import '../services/run_sheet_pdf.dart';
@@ -15,6 +16,8 @@ import '../theme/app_colors.dart';
 import '../widgets/pill_badge.dart';
 import '../widgets/map_with_sheet.dart';
 import '../widgets/route_preview_map.dart';
+import '../widgets/run_summary_card.dart';
+import '../widgets/run_track_watcher.dart';
 import '../widgets/stop_details_sheet.dart';
 import '../widgets/stop_search_delegate.dart';
 import '../widgets/surface_card.dart';
@@ -50,7 +53,7 @@ class DriverRunScreen extends StatefulWidget {
   State<DriverRunScreen> createState() => _DriverRunScreenState();
 }
 
-class _DriverRunScreenState extends State<DriverRunScreen> {
+class _DriverRunScreenState extends State<DriverRunScreen> with RunTrackWatcher {
   StopHighlight? _highlight;
 
   /// The stops as last streamed, for "Find a stop" in the app bar - which
@@ -139,6 +142,9 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
               _docs = docs;
               final stops = [for (final doc in docs) ?RunStop.fromDoc(doc)];
               final listing = RunListing.fromMap(widget.runId, run ?? const {}, routeName: widget.routeName);
+              // Done: the path driven, for the map and the summary.
+              final done = listing.finished != null;
+              if (done) watchTrack(widget.runId);
               final delivered = {
                 for (final doc in docs)
                   if (doc.data()['status'] == 'delivered') doc.id,
@@ -175,6 +181,7 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                     highlight: _highlight,
                     roadLegs: _roadLegsFor(run),
                     deliveredIds: delivered,
+                    driven: done ? track.points : const [],
                     attributionAtTop: true,
                     onStopTap: (index) {
                       final doc = docs.firstWhere((d) => d.id == stops[index].id);
@@ -202,6 +209,17 @@ class _DriverRunScreenState extends State<DriverRunScreen> {
                           icon: const Icon(Icons.navigation_rounded),
                           label: Text(listing.started == null ? 'Start run' : 'Drive this run'),
                           style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                        ),
+                      ),
+                    if (done)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        child: RunSummaryCard(
+                          summary: RunSummary.from(
+                            listing: listing,
+                            stops: [for (final doc in docs) doc.data()],
+                            track: track,
+                          ),
                         ),
                       ),
                     Padding(

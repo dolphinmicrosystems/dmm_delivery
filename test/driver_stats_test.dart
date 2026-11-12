@@ -70,4 +70,67 @@ void main() {
       expect(const Vehicle(id: 'v2', name: 'Spare van', kind: VehicleKind.van).description, 'Spare van');
     });
   });
+
+  group('RouteRecord', () {
+    Map<String, Object> run(String id, String date, int minutes, {String key = 'mosgiel', int? total}) => {
+      'run_id': id,
+      'date': date,
+      'round': key == 'mosgiel' ? 'Mosgiel' : 'South',
+      'round_key': key,
+      'duration_s': minutes * 60,
+      'stops_delivered': 70,
+      'stops_total': ?total,
+    };
+
+    test("reads each route's all-time record from the backend", () {
+      final stats = DriverStats.fromMap({
+        'routes': {
+          'mosgiel': {
+            'round': 'Mosgiel',
+            'runs': 9,
+            'average_duration_s': 9000,
+            'best_duration_s': 8100,
+            'best_date': '2026-10-18',
+            'best_run_id': 'r4',
+            'last_duration_s': 9300,
+            'last_date': '2026-11-10',
+          },
+        },
+      });
+
+      final mosgiel = stats.routes.single;
+      expect(mosgiel.runs, 9);
+      expect(mosgiel.best, const Duration(minutes: 135));
+      expect(mosgiel.lastOverBest, const Duration(minutes: 20));
+      expect(stats.bestRunIds, {'r4'});
+    });
+
+    test('works it out from recent runs for a record written before routes were kept', () {
+      final stats = DriverStats.fromMap({
+        'recent_runs': [
+          run('r3', '2026-11-10', 160),
+          run('r2', '2026-11-09', 150),
+          run('r1', '2026-11-08', 170),
+          run('s1', '2026-11-07', 60, key: 'south'),
+        ],
+      });
+
+      final mosgiel = stats.routes.first; // driven most
+      expect(mosgiel.routeName, 'Mosgiel');
+      expect(mosgiel.runs, 3);
+      expect(mosgiel.best, const Duration(minutes: 150));
+      expect(mosgiel.bestRunId, 'r2');
+      expect(mosgiel.average, const Duration(minutes: 160));
+      expect(mosgiel.last, const Duration(minutes: 160));
+      expect(stats.bestRunIds, {'r2', 's1'});
+    });
+
+    test('a run with stops left undelivered is never the best', () {
+      final stats = DriverStats.fromMap({
+        'recent_runs': [run('half', '2026-11-10', 40, total: 74), run('full', '2026-11-09', 150, total: 70)],
+      });
+
+      expect(stats.routes.single.bestRunId, 'full');
+    });
+  });
 }

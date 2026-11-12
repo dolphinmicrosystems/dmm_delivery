@@ -10,6 +10,7 @@ import '../widgets/pill_badge.dart';
 import '../widgets/surface_card.dart';
 import 'driver_data.dart';
 import 'driver_navigation.dart';
+import 'driver_record_screen.dart';
 import 'driver_schedule.dart';
 
 /// The driver's Runs tab: Upcoming, Today and Past, opening on Today.
@@ -89,10 +90,13 @@ class _CardList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Past opens with the driver's record: best time per route and the rest.
+    final record = phase == RunPhase.past ? DriverRecordLink(authState: authState) : null;
     if (cards.isEmpty) {
       return ListView(
         padding: const EdgeInsets.all(24),
         children: [
+          if (record != null) ...[record, const SizedBox(height: 16)],
           Text(switch (phase) {
             RunPhase.upcoming =>
               'Nothing coming up. When your owner gives you a route or a day, '
@@ -103,12 +107,14 @@ class _CardList extends StatelessWidget {
         ],
       );
     }
+    final lead = record == null ? 0 : 1;
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      itemCount: cards.length,
+      itemCount: cards.length + lead,
       separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
-        final card = cards[index];
+        if (index < lead) return record!;
+        final card = cards[index - lead];
         final run = card.run;
         return run == null
             ? _BookingCard(

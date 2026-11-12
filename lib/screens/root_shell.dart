@@ -60,7 +60,7 @@ class _OwnerShellState extends State<_OwnerShell> {
     // candidate fifth once drivers deliver through the app.
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: const BlueDotAppBar(),
+      appBar: BlueDotAppBar(ownerUid: widget.authState.ownerUid),
       endDrawer: OwnerMenuDrawer(authState: widget.authState),
       body: IndexedStack(
         index: _tabIndex,

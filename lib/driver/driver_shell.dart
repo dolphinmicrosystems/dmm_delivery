@@ -35,7 +35,7 @@ class _DriverShellState extends State<DriverShell> {
   Widget build(BuildContext context) {
     final scaffold = Scaffold(
       backgroundColor: Colors.white,
-      appBar: const BlueDotAppBar(),
+      appBar: BlueDotAppBar(ownerUid: widget.authState.ownerUid),
       endDrawer: DriverMenuDrawer(authState: widget.authState),
       body: Column(
         children: [

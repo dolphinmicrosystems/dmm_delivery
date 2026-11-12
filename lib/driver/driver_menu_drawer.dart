@@ -4,6 +4,7 @@ import '../settings/driver_settings_screen.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
+import 'driver_record_screen.dart';
 
 /// The driver's menu, reached from the hamburger in the app bar.
 ///
@@ -82,6 +83,18 @@ class DriverMenuDrawer extends StatelessWidget {
               ),
             ),
             const Divider(height: 1, color: AppColors.hairline),
+            ListTile(
+              leading: const Icon(Icons.emoji_events_outlined),
+              title: const Text('Your record', style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Best times and every run'),
+              onTap: () {
+                AppLog.auth('driver menu -> Your record');
+                Navigator.of(context).pop();
+                Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => DriverRecordScreen(authState: authState)));
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.notifications_active_outlined),
               title: const Text('Settings', style: TextStyle(fontWeight: FontWeight.w600)),

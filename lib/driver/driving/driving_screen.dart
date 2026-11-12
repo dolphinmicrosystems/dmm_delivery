@@ -9,12 +9,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../models/business_profile.dart';
 import '../../models/delivery_estimate.dart';
 import '../../models/road_legs.dart';
 import '../../models/run_stop.dart';
 import '../../models/run_listing.dart';
 import '../../models/run_time.dart';
 import '../../models/run_timing.dart';
+import '../../services/business_profile_store.dart';
 import '../../settings/settings_store.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
@@ -24,6 +26,7 @@ import '../../widgets/basemap_attribution.dart';
 import '../../widgets/route_preview_map.dart';
 import '../../widgets/run_timing_pill.dart';
 import '../../widgets/stop_details_sheet.dart';
+import '../driver_run_screen.dart';
 import 'delivery_writer.dart';
 import 'driving_logic.dart';
 import 'photo_stamp.dart';
@@ -108,6 +111,13 @@ class _DrivingScreenState extends State<DrivingScreen> {
 
   StreamSubscription<Position>? _positionSub;
   StreamSubscription<bool>? _voiceSetting;
+
+  /// The owner's "Photo at every stop" (Settings; business_profile). Only
+  /// binding when this build can upload photos at all - a driver must never
+  /// be stuck at a door with no way to deliver.
+  StreamSubscription<BusinessProfile>? _profileSub;
+  bool _requirePhotoSetting = false;
+  bool get _requirePhoto => _requirePhotoSetting && DeliveryWriter.photosAvailable;
   Position? _position;
   bool _follow = true;
   bool _mapReady = false;
@@ -304,6 +314,14 @@ class _DrivingScreenState extends State<DrivingScreen> {
   void initState() {
     super.initState();
     WakelockPlus.enable();
+    if (widget.authState.ownerUid case final ownerUid?) {
+      _profileSub = BusinessProfileStore(ownerUid).watch().listen(
+        (profile) {
+          if (mounted) setState(() => _requirePhotoSetting = profile.requirePhoto);
+        },
+        onError: (Object error) => AppLog.auth('business profile unavailable', {'error': '$error'}),
+      );
+    }
     _voiceSetting = SettingsStore(widget.authState).voicePrompts().listen((on) {
       if (mounted) setState(() => _voice.muted = !on);
     });
@@ -317,6 +335,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     _positionSub?.cancel();
     _heartbeat.stop();
     _voiceSetting?.cancel();
+    _profileSub?.cancel();
     _voice.stop();
     WakelockPlus.disable();
     _map.dispose();
@@ -364,6 +383,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
     });
     // A phone's heading is only trustworthy when it's moving.
     if (position.speed > 1.5 && position.heading >= 0) _heading = position.heading;
+    // The path driven, for the run's summary - only while it is under way.
+    if (_started && !_finished) _heartbeat.record(position);
     _resolveTarget();
     _followVan(position);
     _speakIfDue();
@@ -404,6 +425,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         name: stop.stop.customerName.isEmpty ? stop.stop.address : stop.stop.customerName,
         items: stop.stop.itemsSummary,
         photos: DeliveryWriter.photosAvailable,
+        requirePhoto: _requirePhoto,
       ),
     );
     _askingLeft = false;
@@ -664,23 +686,43 @@ class _DrivingScreenState extends State<DrivingScreen> {
       final go = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('End the run?'),
+          title: const Text('Complete the run?'),
           content: Text(
-            '$left ${left == 1 ? 'stop is' : 'stops are'} not delivered. Your owner will see that.',
+            '$left ${left == 1 ? 'stop is' : 'stops are'} not delivered. Your owner will see that '
+            'in the run summary.',
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Keep going')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('End run')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Complete run')),
           ],
         ),
       );
       if (go != true || !mounted) return;
     }
-    final navigator = Navigator.of(context);
-    await _attempt('end the run', () async {
+    // The last stretch of the path, before the run stops recording it.
+    _heartbeat.flushTrack();
+    await _attempt('complete the run', () async {
       await _writer.end(hasStart: _run['driver_started_at'] != null);
-      navigator.pop();
+      _openSummary();
     });
+  }
+
+  /// The run's summary - time, deliveries, the path driven on the map - in
+  /// place of the driving screen. The owner is told by notify-run.
+  void _openSummary() {
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => DriverRunScreen(
+          authState: widget.authState,
+          runId: widget.runId,
+          routeName: widget.routeName,
+          startTime: widget.startTime,
+          endTime: widget.endTime,
+          vehicle: widget.vehicle,
+        ),
+      ),
+    );
   }
 
   /// "Directions": turn-by-turn in the app, from where the van is now.
@@ -838,7 +880,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
           'Open it again to carry on from where you are.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, 'end'), child: const Text('End run')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, 'end'), child: const Text('Complete run')),
           TextButton(onPressed: () => Navigator.pop(dialogContext, 'leave'), child: const Text('Leave')),
           FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Stay')),
         ],
@@ -1200,7 +1242,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
         ended: _finished,
         busy: _busy,
         onEnd: _end,
-        onClose: () => Navigator.of(context).pop(),
+        onClose: _openSummary,
       );
     } else {
       final meters = _metersTo(current);
@@ -1234,6 +1276,8 @@ class _DrivingScreenState extends State<DrivingScreen> {
         onNavigate: () => _directions(current),
         onArrived: () => _arrive(current),
         onDeliver: (withPhoto) => _deliver(current, withPhoto: withPhoto),
+        onComplete: _end,
+        requirePhoto: _requirePhoto,
       );
     }
     final other = _nearbyOther;
@@ -1387,6 +1431,8 @@ class _DrivePanel extends StatelessWidget {
     required this.onNavigate,
     required this.onArrived,
     required this.onDeliver,
+    required this.onComplete,
+    this.requirePhoto = false,
   });
 
   final _Stop stop;
@@ -1420,6 +1466,11 @@ class _DrivePanel extends StatelessWidget {
   final VoidCallback onNavigate;
   final VoidCallback onArrived;
   final void Function(bool withPhoto) onDeliver;
+
+  /// "Complete run" - in the opened panel, so it is there mid-run without
+  /// sitting under a thumb on every glance.
+  final VoidCallback onComplete;
+  final bool requirePhoto;
 
   /// The big figure and the line beside it: time and distance by road while
   /// navigating, else how far and which way, else just "At the stop".
@@ -1615,9 +1666,20 @@ class _DrivePanel extends StatelessWidget {
               label: const Text('Take photo & deliver'),
               style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
             ),
-          TextButton(
-            onPressed: busy ? null : () => onDeliver(false),
-            child: Text(photos ? 'Deliver without a photo' : 'Delivered'),
+          // "Photo at every stop" (the owner's setting) leaves no way round it.
+          if (!requirePhoto)
+            TextButton(
+              onPressed: busy ? null : () => onDeliver(false),
+              child: Text(photos ? 'Deliver without a photo' : 'Delivered'),
+            ),
+        ],
+        if (expanded) ...[
+          const Divider(height: 20, color: AppColors.hairline),
+          OutlinedButton.icon(
+            onPressed: busy ? null : onComplete,
+            icon: const Icon(Icons.flag_rounded),
+            label: const Text('Complete run'),
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
           ),
         ],
       ],
@@ -1631,11 +1693,20 @@ enum _LeftAnswer { delivered, photo, notDelivered, timedOut }
 /// Counts down and answers "delivered" by itself, so a driver with their
 /// hands on the wheel needn't touch the phone.
 class _LeftStopDialog extends StatefulWidget {
-  const _LeftStopDialog({required this.name, required this.items, required this.photos});
+  const _LeftStopDialog({
+    required this.name,
+    required this.items,
+    required this.photos,
+    this.requirePhoto = false,
+  });
 
   final String name;
   final String items;
   final bool photos;
+
+  /// A photo is required: no countdown and no "delivered" without one - the
+  /// driver adds the photo or says it wasn't delivered.
+  final bool requirePhoto;
 
   @override
   State<_LeftStopDialog> createState() => _LeftStopDialogState();
@@ -1648,6 +1719,7 @@ class _LeftStopDialogState extends State<_LeftStopDialog> {
   @override
   void initState() {
     super.initState();
+    if (widget.requirePhoto) return;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_left <= 1) {
         _close(_LeftAnswer.timedOut);
@@ -1681,13 +1753,18 @@ class _LeftStopDialogState extends State<_LeftStopDialog> {
               padding: const EdgeInsets.only(bottom: 10),
               child: Text(widget.items, style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
-          Text("You drove away without marking it. It will be marked delivered in $_left s."),
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: () => _close(_LeftAnswer.delivered),
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-            child: Text('Yes, delivered ($_left)'),
+          Text(
+            widget.requirePhoto
+                ? 'You drove away without marking it. A photo is needed to mark it delivered.'
+                : "You drove away without marking it. It will be marked delivered in $_left s.",
           ),
+          const SizedBox(height: 16),
+          if (!widget.requirePhoto)
+            FilledButton(
+              onPressed: () => _close(_LeftAnswer.delivered),
+              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+              child: Text('Yes, delivered ($_left)'),
+            ),
           if (widget.photos) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -1771,14 +1848,14 @@ class _DonePanel extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          ended ? 'This run is finished.' : 'Head back to the depot, then end the run.',
+          ended ? 'This run is complete.' : 'Head back to the depot, then complete the run.',
           style: const TextStyle(fontSize: 13, color: AppColors.inkMuted),
         ),
         const SizedBox(height: 12),
         FilledButton(
           onPressed: busy ? null : (ended ? onClose : onEnd),
           style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-          child: Text(ended ? 'Close' : 'End run'),
+          child: Text(ended ? 'See the summary' : 'Complete run'),
         ),
       ],
     );

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/route_assignment.dart';
+import '../../models/route_lock.dart';
 import '../../models/route_name.dart';
 import '../../services/route_assigner.dart';
 import '../../services/route_renamer.dart';
@@ -242,6 +243,32 @@ class _CircuitCardState extends State<_CircuitCard> {
   }
 
   Future<void> _confirmDelete(BuildContext context, String round) async {
+    // Not while a driver has it or is driving it - firestore.rules refuses
+    // that too; this says why, and offers the way out.
+    final lock = RouteLock.of(widget.data, widget.assignments, DateTime.now());
+    if (lock != null) {
+      AppLog.owner('delete route refused', {'roundKey': widget.roundKey, 'why': lock.title});
+      final reassign = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text("Can't delete yet"),
+          content: Text('${lock.title}. ${lock.message}'),
+          actions: [
+            if (lock.canReassign)
+              TextButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Change driver')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('OK')),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (reassign == true) {
+        await _assignDriver();
+      } else {
+        setState(() => _revealActions = false);
+      }
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -265,9 +292,20 @@ class _CircuitCardState extends State<_CircuitCard> {
     try {
       await FirebaseFirestore.instance.collection('circuits').doc(widget.roundKey).delete();
       AppLog.owner('route deleted', {'roundKey': widget.roundKey});
-    } catch (e, s) {
+    } on FirebaseException catch (e, s) {
       AppLog.owner.error('route delete failed', e, s, {'roundKey': widget.roundKey});
-      rethrow;
+      if (!mounted) return;
+      // Refused by the rules: assigned or driven since this screen last
+      // heard (e.g. assigned on another phone a moment ago).
+      ScaffoldMessenger.of(this.context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e.code == 'permission-denied'
+                ? "This route can't be deleted while a driver has it or is driving it."
+                : "Couldn't delete the route. Check your connection and try again.",
+          ),
+        ),
+      );
     }
   }
 
