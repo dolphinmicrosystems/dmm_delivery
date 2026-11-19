@@ -47,7 +47,7 @@ class BusinessProfileStore {
   /// with a sentence fit to show when the file can't be used.
   Future<void> setLogo(Uint8List picked) async {
     final shrunk = await compute(shrinkLogo, picked);
-    if (shrunk == null) throw LogoException("That file isn't an image Blue Dot can read.");
+    if (shrunk == null) throw LogoException("That file isn't an image the app can read.");
     AppLog.owner('business logo', {'bytes': shrunk.length});
     await _save({'logo': Blob(shrunk)});
   }

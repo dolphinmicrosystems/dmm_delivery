@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../theme/app_colors.dart';
 import 'push_notifications.dart';
+import '../config/app_brand.dart';
 
 /// A strip across the top of the driver's screens while notifications are
 /// off: without them a driver never hears about a new route.
@@ -80,7 +81,7 @@ class _NotificationPermissionBannerState extends State<NotificationPermissionBan
             Expanded(
               child: Text(
                 _askedAgain
-                    ? 'Notifications are still off. Turn them on in Settings > Apps > Blue Dot > Notifications.'
+                    ? 'Notifications are still off. Turn them on in Settings > Apps > ${AppBrand.shortName} > Notifications.'
                     : "Notifications are off - you won't hear when you're given a route.",
                 style: const TextStyle(fontSize: 12.5, height: 1.35),
               ),

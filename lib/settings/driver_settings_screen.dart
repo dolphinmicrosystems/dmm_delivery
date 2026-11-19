@@ -6,6 +6,7 @@ import '../widgets/section_label.dart';
 import 'cards/reminder_card.dart';
 import 'cards/switch_setting_card.dart';
 import 'settings_store.dart';
+import '../util/app_version.dart';
 
 /// The driver's settings, from their menu. Smaller than the owner's
 /// SettingsScreen: when to be reminded of a run, and the voice while driving.
@@ -37,6 +38,8 @@ class DriverSettingsScreen extends StatelessWidget {
             onChanged: settings.setVoicePrompts,
             what: 'voice prompts',
           ),
+          const SizedBox(height: 24),
+          const AppVersionText(),
         ],
       ),
     );

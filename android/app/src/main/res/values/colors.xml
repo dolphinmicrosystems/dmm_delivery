@@ -2,4 +2,6 @@
 <resources>
     <!-- AppColors.brand: tints the notification icon and accent. -->
     <color name="bluedot_brand">#1A56DB</color>
+    <!-- Behind the launcher truck (mipmap-anydpi-v26/ic_launcher.xml). -->
+    <color name="ic_launcher_background">#1A56DB</color>
 </resources>

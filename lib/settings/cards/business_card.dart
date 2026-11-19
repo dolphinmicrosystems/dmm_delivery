@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../config/app_brand.dart';
 import '../../models/business_profile.dart';
 import '../../services/business_profile_store.dart';
 import '../../theme/app_colors.dart';
@@ -175,7 +176,7 @@ class _NameFieldState extends State<_NameField> {
   }
 }
 
-/// The business's logo, or its initial (or the Blue Dot "B") on brand blue.
+/// The business's logo, or its initial (or the app's, "D") on brand blue.
 class BusinessLogo extends StatelessWidget {
   const BusinessLogo({super.key, required this.profile, this.size = 32});
 
@@ -204,7 +205,7 @@ class BusinessLogo extends StatelessWidget {
       decoration: BoxDecoration(color: AppColors.brand, borderRadius: radius),
       alignment: Alignment.center,
       child: Text(
-        name.isEmpty ? 'B' : name.characters.first.toUpperCase(),
+        (name.isEmpty ? AppBrand.name : name).characters.first.toUpperCase(),
         style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: size * 0.45),
       ),
     );

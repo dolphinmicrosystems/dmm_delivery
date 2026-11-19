@@ -2,6 +2,9 @@
 
 Dunedin Delivery App
 
+- Building and environment config: [BUILD.md](BUILD.md)
+- Publishing to Google Play (beta and releases): [RELEASING.md](RELEASING.md)
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

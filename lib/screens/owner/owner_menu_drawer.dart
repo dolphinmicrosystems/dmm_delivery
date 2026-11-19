@@ -5,6 +5,8 @@ import '../../settings/settings_screen.dart';
 import '../../state/auth_state.dart';
 import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
+import '../../util/app_version.dart';
+import '../../config/app_brand.dart';
 
 /// The right-hand hamburger menu from owner-menu.html. An end drawer rather
 /// than a third nav tab: these are occasional destinations, and the bottom
@@ -59,14 +61,21 @@ class OwnerMenuDrawer extends StatelessWidget {
             _MenuItem(
               icon: Icons.info_outline_rounded,
               title: 'About',
-              subtitle: 'Blue Dot v1.0 · NZ',
-              onTap: () {
+              subtitle: AppBrand.name,
+              subtitleWidget: const Align(
+                alignment: Alignment.centerLeft,
+                child: AppVersionText(prefix: 'Version '),
+              ),
+              onTap: () async {
                 AppLog.owner('menu -> About');
-                Navigator.of(context).pop();
+                final navigator = Navigator.of(context);
+                final version = await AppVersion.load();
+                navigator.pop();
+                if (!navigator.mounted) return;
                 showAboutDialog(
-                  context: context,
-                  applicationName: 'Blue Dot',
-                  applicationVersion: '1.0 · NZ',
+                  context: navigator.context,
+                  applicationName: AppBrand.name,
+                  applicationVersion: 'Version ${version.label}',
                 );
               },
             ),
@@ -86,12 +95,21 @@ class OwnerMenuDrawer extends StatelessWidget {
 }
 
 class _MenuItem extends StatelessWidget {
-  const _MenuItem({required this.icon, required this.title, required this.subtitle, required this.onTap});
+  const _MenuItem({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.subtitleWidget,
+  });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+
+  /// Shown in place of [subtitle] when given (the About row's live version).
+  final Widget? subtitleWidget;
 
   @override
   Widget build(BuildContext context) {
@@ -115,11 +133,12 @@ class _MenuItem extends StatelessWidget {
                 children: [
                   Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
-                  ),
+                  subtitleWidget ??
+                      Text(
+                        subtitle,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: AppColors.inkMuted),
+                      ),
                 ],
               ),
             ),

@@ -4,6 +4,7 @@ import '../settings/driver_settings_screen.dart';
 import '../state/auth_state.dart';
 import '../theme/app_colors.dart';
 import '../util/app_log.dart';
+import '../util/app_version.dart';
 import 'driver_record_screen.dart';
 
 /// The driver's menu, reached from the hamburger in the app bar.
@@ -108,6 +109,7 @@ class DriverMenuDrawer extends StatelessWidget {
               },
             ),
             const Spacer(),
+            const Padding(padding: EdgeInsets.only(bottom: 10), child: AppVersionText()),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: SizedBox(

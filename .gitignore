@@ -45,8 +45,12 @@ app.*.map.json
 /android/app/release
 /android/build/
 /android/.gradle/
+/android/key.properties
 .vscode/
 
 # Local --dart-define values (the CARTO basemap key). Copy
 # dart_defines.example.json to dart_defines.json and fill it in.
 dart_defines.json
+
+# tool/play_upload.sh makes this on first use.
+/tool/.venv-release/

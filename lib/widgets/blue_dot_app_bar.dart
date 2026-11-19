@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/business_profile.dart';
 import '../services/business_profile_store.dart';
 import '../settings/cards/business_card.dart';
+import '../config/app_brand.dart';
 
 /// The header both shells share: the business's logo and name when the owner
 /// has set them (Settings -> Business), else the Blue Dot mark and name -
@@ -66,7 +67,7 @@ class _Brand extends StatelessWidget {
         const SizedBox(width: 10),
         Flexible(
           child: Text(
-            name == null || name.isEmpty ? 'Blue Dot' : name,
+            name == null || name.isEmpty ? AppBrand.name : name,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
           ),

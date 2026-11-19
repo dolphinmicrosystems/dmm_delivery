@@ -40,8 +40,17 @@ several things that look like bugs (two presence states, no map panel on the boa
   formatter's style, and Dart 3.13's tall-style formatter rewrites 58 files that nobody touched.
   Match the surrounding style by hand instead. (Re-enable it the day someone reformats the whole
   repo in one deliberate commit and pins `formatter: page_width` in `analysis_options.yaml`.)
-- Release build (what `cloudbuild.yaml` runs): `flutter build appbundle --release` — signing is not wired
-  up yet, so this produces an unsigned/debug-keyed bundle
+- **Release to Google Play: `tool/release.sh patch|minor|major|build [--track internal|closed|open|production]
+  [--notes "..."] [--no-upload] [--no-git]`.** It bumps `version:` in pubspec.yaml (semantic version + a
+  build number that only goes up, Play's versionCode; never edit either by hand), runs analyze and tests,
+  builds the bundle, uploads it with `tool/play_upload.sh` (Play Developer API, impersonating the backend's
+  `play-publisher` service account from `play_publisher.tf`, so no key file), then commits pubspec.yaml and
+  tags `v<version>`. A failure puts the old version back. The app shows the version as "1.4.2 (27)"
+  (`lib/util/app_version.dart`) in both menus and both Settings screens.
+- Release signing: `android/key.properties` (gitignored) names the upload keystore; without it a release
+  build falls back to the debug key, which Play refuses. Play re-signs with its own app signing key, whose
+  SHA-1 must be in the backend's `firebase_apps.tf` and `maps.tf` and in `GOOGLE_MAP_TILES_ANDROID_CERT`, or
+  Google sign-in and the Google basemaps fail on Play installs
 - Regenerate environment config: `GCP_PROJECT_ID=i-destiny-428904-s2 ./tool/generate_infra_config.sh`
 
 Lints come from `package:flutter_lints/flutter.yaml`; the analyzer excludes `build/**` and every

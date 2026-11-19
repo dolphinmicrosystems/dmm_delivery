@@ -353,7 +353,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
       var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        setState(() => _locationProblem = 'Blue Dot can\'t see where you are - tap "Arrived" yourself.');
+        setState(() => _locationProblem = 'The app can\'t see where you are - tap "Arrived" yourself.');
         return;
       }
       _positionSub =
@@ -757,7 +757,7 @@ class _DrivingScreenState extends State<DrivingScreen> {
     if (!mounted) return;
     if (here == null) {
       setState(() {
-        _navStatus = "Can't find your location - check location is on for Blue Dot.";
+        _navStatus = "Can't find your location - check location is on for this app.";
         _navFailed = true;
       });
       return;

@@ -11,6 +11,7 @@ import 'cards/invitation_deadline_card.dart';
 import 'cards/stop_time_card.dart';
 import 'cards/switch_setting_card.dart';
 import 'settings_store.dart';
+import '../util/app_version.dart';
 
 /// Reached from the owner's hamburger menu: their account, and every setting,
 /// one card each (`cards/`), grouped under a label. The settings themselves
@@ -64,6 +65,7 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 8),
           InvitationDeadlineCard(settings: settings),
           const SizedBox(height: 24),
+          const AppVersionText(),
         ],
       ),
     );

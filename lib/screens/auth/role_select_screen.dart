@@ -5,6 +5,7 @@ import '../../theme/app_colors.dart';
 import '../../util/app_log.dart';
 import '../../widgets/surface_card.dart';
 import 'sign_in_screen.dart';
+import '../../config/app_brand.dart';
 
 /// First screen shown to a signed-out user. Purely a copy/navigation
 /// router - the actual role is decided server-side by the `role` custom
@@ -29,10 +30,10 @@ class RoleSelectScreen extends StatelessWidget {
                 height: 56,
                 decoration: BoxDecoration(color: AppColors.brand, borderRadius: BorderRadius.circular(16)),
                 alignment: Alignment.center,
-                child: const Text('B', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+                child: Text(AppBrand.name[0], style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
               ),
               const SizedBox(height: 16),
-              const Text('Blue Dot', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const Text(AppBrand.name, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
               const Text(
                 'Who are you signing in as?',

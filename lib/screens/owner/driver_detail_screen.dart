@@ -76,7 +76,7 @@ class DriverDetailScreen extends StatelessWidget {
             // The Settings switch covers every driver at once.
             SwitchSettingCard(
               title: 'Tell me when ${invitation.displayName} opens the app',
-              subtitle: 'A notification when they open Blue Dot after half an hour or more away.',
+              subtitle: 'A notification when they open the app after half an hour or more away.',
               value: SettingsStore(authState).presenceAlertFor(uid),
               onChanged: (on) => SettingsStore(authState).setPresenceAlertFor(uid, on),
               what: 'driver presence alert',

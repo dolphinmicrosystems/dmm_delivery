@@ -12,6 +12,7 @@ import 'screens/auth/auth_gate.dart';
 import 'state/auth_state.dart';
 import 'theme/app_theme.dart';
 import 'util/app_log.dart';
+import 'config/app_brand.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +40,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Blue Dot',
+      title: AppBrand.name,
       debugShowCheckedModeBanner: false,
       // So a tapped notification can open its run (NotificationRouter).
       navigatorKey: NotificationRouter.navigatorKey,
