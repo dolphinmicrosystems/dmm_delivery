@@ -130,7 +130,8 @@ class _SignInScreenState extends State<SignInScreen> {
       AppLog.auth('SignInScreen showing error dialog');
       showDialog<void>(
         context: context,
-        builder: (dialogContext) => _SignInErrorDialog(message: message),
+        builder: (dialogContext) =>
+            _SignInErrorDialog(message: message, detail: widget.authState.errorDetail),
       );
     });
   }
@@ -197,7 +198,7 @@ class _SignInScreenState extends State<SignInScreen> {
                         icon: Icons.g_mobiledata_rounded,
                         onPressed: () {
                           AppLog.auth('Continue with Google tapped', {'isOwnerPath': isOwnerPath});
-                          authState.signInWithGoogle();
+                          authState.signInWithGoogle(chosen: isOwnerPath ? AuthRole.owner : AuthRole.driver);
                         },
                       ),
               ],
@@ -217,9 +218,13 @@ class _SignInScreenState extends State<SignInScreen> {
 /// as a failure. The icon is a closed envelope rather than a red warning
 /// triangle for the same reason.
 class _SignInErrorDialog extends StatelessWidget {
-  const _SignInErrorDialog({required this.message});
+  const _SignInErrorDialog({required this.message, this.detail});
 
   final String message;
+
+  /// The raw error code, small and grey: there for a screenshot, not for
+  /// the person to make sense of.
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +255,18 @@ class _SignInErrorDialog extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 13.5, color: AppColors.inkMuted, height: 1.45),
             ),
+            if (detail != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Error: $detail',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.inkMuted.withValues(alpha: 0.7),
+                  height: 1.35,
+                ),
+              ),
+            ],
             const SizedBox(height: 22),
             SizedBox(
               width: double.infinity,

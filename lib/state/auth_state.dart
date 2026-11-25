@@ -18,6 +18,15 @@ import '../util/app_log.dart';
 /// term for what this app calls a driver.
 enum AuthRole { owner, driver }
 
+/// The backend's spelling of a role (`rider` for a driver) to the app's.
+extension AuthRoleClaim on AuthRole {
+  static AuthRole? parse(String? claim) => switch (claim) {
+    'owner' => AuthRole.owner,
+    'rider' => AuthRole.driver,
+    _ => null,
+  };
+}
+
 enum AuthStatus {
   loading,
   signedOut,
@@ -61,43 +70,66 @@ class AuthState extends ChangeNotifier {
 
   String? errorMessage;
 
+  /// The raw code behind [errorMessage], shown small under it, for support.
+  /// Null when the message already says everything (a refusal from the backend).
+  String? errorDetail;
+
+  /// True from tapping "Continue with Google" until that sign-in has been
+  /// checked against the role the person chose. While it is set the token
+  /// listener holds back: publishing `signedIn` early would show the wrong
+  /// home screen for a moment before [signInWithGoogle] throws them out.
+  bool _signingIn = false;
+
   Future<void> _onIdTokenChanged(User? user) async {
     AppLog.auth('idTokenChanged fired', {
       'uid': user?.uid,
       'email': user?.email,
       'statusBefore': status.name,
     });
-    this.user = user;
     if (user == null) {
-      status = AuthStatus.signedOut;
+      this.user = null;
       role = null;
-      AppLog.auth('no user -> signedOut');
+      ownerUid = null;
+      // A refused sign-in signs out on purpose; keep its message on screen.
+      // AuthGate shows the same screen for `error` as for `signedOut`.
+      if (status != AuthStatus.error) status = AuthStatus.signedOut;
+      AppLog.auth('no user -> ${status.name}');
       notifyListeners();
       return;
     }
+    if (_signingIn) {
+      AppLog.auth('token change held until sign-in has checked the role');
+      return;
+    }
+    // A late event for an account already signed out again (a refused
+    // sign-in) must not resurrect it.
+    if (FirebaseAuth.instance.currentUser?.uid != user.uid) {
+      AppLog.auth('stale token change ignored');
+      return;
+    }
+    _apply(user, await user.getIdTokenResult());
+  }
 
-    final tokenResult = await user.getIdTokenResult();
-    final claim = tokenResult.claims?['role'] as String?;
+  /// Reads the backend's claims off [token] and decides the status.
+  void _apply(User user, IdTokenResult token) {
+    this.user = user;
+    final claim = token.claims?['role'] as String?;
     // The tenant key, minted alongside `role` by before_sign_in_fn.py. For an
     // owner it is their own uid; for a driver it is the uid of the owner who
     // invited them. Every owner-scoped query filters on it, and
     // firestore.rules compares it - so a session without it can read nothing,
     // which is the correct outcome for a token that predates this claim.
-    ownerUid = tokenResult.claims?['owner_uid'] as String?;
+    ownerUid = token.claims?['owner_uid'] as String?;
     // The full claim set matters here, not just `role`: a missing role claim
     // is the difference between "signed in" and the needsRole dead-end, and
     // it's worth seeing exactly what the backend actually returned.
     AppLog.auth('token claims read', {
       'roleClaim': claim,
       'hasOwnerUid': ownerUid != null,
-      'allClaims': tokenResult.claims?.keys.toList(),
-      'authTime': tokenResult.authTime,
+      'allClaims': token.claims?.keys.toList(),
+      'authTime': token.authTime,
     });
-    role = switch (claim) {
-      'owner' => AuthRole.owner,
-      'rider' => AuthRole.driver,
-      _ => null,
-    };
+    role = AuthRoleClaim.parse(claim);
     status = switch ((role, ownerUid)) {
       (null, _) => AuthStatus.needsRole,
       (_, null) => AuthStatus.staleSession,
@@ -107,9 +139,18 @@ class AuthState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> signInWithGoogle() async {
-    AppLog.auth('signInWithGoogle start', {'statusBefore': status.name});
+  /// Signs in with Google as the role the person chose on the first screen.
+  ///
+  /// The role itself is the backend's decision (the `role` claim), not the
+  /// button's. The button is checked against it: an owner who tapped
+  /// "Driver", or a driver who tapped "Owner", is signed straight back out
+  /// and told which one to pick. Letting it through quietly lands them in a
+  /// different app from the one they asked for, which reads as a bug.
+  Future<void> signInWithGoogle({required AuthRole chosen}) async {
+    AppLog.auth('signInWithGoogle start', {'statusBefore': status.name, 'chosen': chosen.name});
+    _signingIn = true;
     errorMessage = null;
+    errorDetail = null;
     status = AuthStatus.loading;
     notifyListeners();
 
@@ -137,10 +178,30 @@ class AuthState extends ChangeNotifier {
       // already cached locally - the beforeSignIn blocking function sets the
       // role claim server-side as part of *this* sign-in, and a stale local
       // token snapshot here would otherwise read back as "no role yet".
-      final refreshed = await userCredential.user?.getIdTokenResult(true);
+      final signedIn = userCredential.user;
+      final refreshed = await signedIn?.getIdTokenResult(true);
       AppLog.auth('forced token refresh done', {'roleClaim': refreshed?.claims?['role']});
-      // _onIdTokenChanged fires from the listener above (forceRefresh above
-      // triggers it again with the up-to-date claims) and sets status.
+      // Never leave the spinner up: the catch-all below turns this into a message.
+      if (signedIn == null || refreshed == null) throw StateError('signed in, but no user or token');
+
+      final actual = AuthRoleClaim.parse(refreshed.claims?['role'] as String?);
+      if (actual != null && actual != chosen) {
+        AppLog.auth('role does not match the button chosen; signing out', {
+          'chosen': chosen.name,
+          'actual': actual.name,
+        });
+        errorMessage =
+            SignInFailure.wrongRole(chosen: chosen.name, actual: actual.name, email: signedIn.email);
+        errorDetail = null;
+        status = AuthStatus.error;
+        _signingIn = false;
+        await FirebaseAuth.instance.signOut();
+        await _googleSignIn.signOut();
+        notifyListeners();
+        return;
+      }
+      _signingIn = false;
+      _apply(signedIn, refreshed);
     } on FirebaseAuthException catch (e, s) {
       AppLog.auth.error('FirebaseAuthException during sign-in', e, s, {'code': e.code});
       // A blocking-function rejection arrives wrapped in Identity Platform's
@@ -157,16 +218,22 @@ class AuthState extends ChangeNotifier {
       // a quiet sign-out is how an owner once watched sign-in "do nothing"
       // while nothing reached Firebase and nobody could see why.
       AppLog.auth.error('GoogleSignInException during sign-in', e, s, {'code': e.code.name});
-      errorMessage = SignInFailure.google(e.code.name, e.description);
+      final failure = SignInFailure.google(e.code.name, e.description);
+      errorMessage = failure.message;
+      errorDetail = failure.detail;
       status = AuthStatus.error;
       notifyListeners();
     } catch (e, s) {
       // Anything else (a platform error from a plugin) must not escape and
       // leave the screen spinning or silently reset.
       AppLog.auth.error('unexpected error during sign-in', e, s, {'type': e.runtimeType.toString()});
-      errorMessage = SignInFailure.unexpected(e);
+      final failure = SignInFailure.unexpected(e);
+      errorMessage = failure.message;
+      errorDetail = failure.detail;
       status = AuthStatus.error;
       notifyListeners();
+    } finally {
+      _signingIn = false;
     }
   }
 

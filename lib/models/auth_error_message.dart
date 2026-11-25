@@ -72,29 +72,47 @@ class AuthErrorMessage {
 
 /// What to show when Google's own sign-in, before Firebase, fails.
 ///
-/// Always says something, and always carries the raw code and description
-/// so a screenshot from the person who hit it is enough to diagnose it.
+/// Two parts, kept apart on purpose. [SignInError.message] is one short
+/// sentence for the person holding the phone. [SignInError.detail] is the raw
+/// code and description, drawn small underneath, so a screenshot is still
+/// enough to diagnose it; mixed into one paragraph it read as an alarming
+/// wall of text and the real error code got lost in it.
 class SignInFailure {
   const SignInFailure._();
 
   /// Longest raw detail shown; the full text goes to Crashlytics.
-  static const maxDetail = 300;
+  static const maxDetail = 160;
 
-  static String google(String code, String? description) {
-    final headline = code == 'canceled'
-        ? "Google sign-in didn't finish.\n\n"
-              "If you didn't close it yourself: check that the Google account you want is added to "
-              'this phone (Settings > Accounts) and that Google Play services is up to date, then '
-              'try again.'
-        : "Google sign-in didn't work. Try again, and if it keeps happening send this message "
-              'to whoever manages the app.';
-    final detail = (description == null || description.trim().isEmpty) ? code : '$code: ${description.trim()}';
-    return '$headline\n\nDetails: ${_clip(detail)}';
+  static SignInError google(String code, String? description) {
+    final text = description?.trim() ?? '';
+    final detail = text.isEmpty ? code : '$code: $text';
+    return SignInError(
+      code == 'canceled'
+          ? "Google sign-in didn't finish. Please try again."
+          : "Google sign-in didn't work. Please try again.",
+      _clip(detail),
+    );
   }
 
-  static String unexpected(Object error) =>
-      "Sign-in didn't work. Try again, and if it keeps happening send this message to whoever "
-      'manages the app.\n\nDetails: ${_clip(error.toString())}';
+  /// The Google account is real and set up, just not as what was chosen on
+  /// the first screen. Roles arrive as `owner` / `driver` (AuthRole names).
+  static String wrongRole({required String chosen, required String actual, String? email}) {
+    final who = (email == null || email.isEmpty) ? 'This Google account' : email;
+    final label = actual == 'owner' ? 'Owner' : 'Driver';
+    return '$who is set up as ${actual == 'owner' ? 'an owner' : 'a driver'}, not '
+        '${chosen == 'owner' ? 'an owner' : 'a driver'}. Go back and choose $label.';
+  }
+
+  static SignInError unexpected(Object error) =>
+      SignInError("Sign-in didn't work. Please try again.", _clip(error.toString()));
 
   static String _clip(String s) => s.length <= maxDetail ? s : '${s.substring(0, maxDetail)}…';
+}
+
+/// A sign-in failure as shown: a sentence, plus the technical detail if any.
+class SignInError {
+  const SignInError(this.message, [this.detail]);
+
+  final String message;
+  final String? detail;
 }

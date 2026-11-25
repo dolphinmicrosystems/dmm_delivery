@@ -77,23 +77,33 @@ void main() {
 
 void signInFailureTests() {
   group('SignInFailure', () {
-    test('a "canceled" sign-in still explains itself and carries the raw detail', () {
-      final m = SignInFailure.google('canceled', '[16] Account reauth failed.');
-      expect(m, contains("didn't finish"));
-      expect(m, contains('Settings > Accounts'));
-      expect(m, endsWith('Details: canceled: [16] Account reauth failed.'));
+    test('a "canceled" sign-in gets one short sentence, the raw error kept apart', () {
+      final e = SignInFailure.google('canceled', '[16] Account reauth failed.');
+      expect(e.message, "Google sign-in didn't finish. Please try again.");
+      expect(e.detail, 'canceled: [16] Account reauth failed.');
     });
 
     test('other codes say it failed and keep the code when there is no description', () {
-      final m = SignInFailure.google('providerConfigurationError', null);
-      expect(m, contains("didn't work"));
-      expect(m, endsWith('Details: providerConfigurationError'));
+      final e = SignInFailure.google('providerConfigurationError', null);
+      expect(e.message, contains("didn't work"));
+      expect(e.detail, 'providerConfigurationError');
+    });
+
+    test('the wrong button names the account and the button to choose', () {
+      expect(
+        SignInFailure.wrongRole(chosen: 'owner', actual: 'driver', email: 'ana@gmail.com'),
+        'ana@gmail.com is set up as a driver, not an owner. Go back and choose Driver.',
+      );
+      expect(
+        SignInFailure.wrongRole(chosen: 'driver', actual: 'owner'),
+        'This Google account is set up as an owner, not a driver. Go back and choose Owner.',
+      );
     });
 
     test('long details are clipped', () {
-      final m = SignInFailure.unexpected(Exception('x' * 1000));
-      expect(m.length, lessThan(SignInFailure.maxDetail + 200));
-      expect(m, endsWith('…'));
+      final e = SignInFailure.unexpected(Exception('x' * 1000));
+      expect(e.detail!.length, SignInFailure.maxDetail + 1);
+      expect(e.detail, endsWith('…'));
     });
   });
 }

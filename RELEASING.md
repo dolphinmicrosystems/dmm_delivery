@@ -128,6 +128,10 @@ a sign-in error. The Simple map style still works.
 
 1. Play Console → **Test and release → App integrity → App signing**. Copy the **SHA-1** of the
    **App signing key certificate** and of the **Upload key certificate**.
+   Double-check the app signing one against a real Play build: **App bundle explorer** → the
+   version → **Downloads** → **Signed, universal APK**, then
+   `apksigner verify --print-certs universal.apk`. A wrong one shows on phones as
+   "canceled: [16] Account reauth failed".
 2. In the backend repo (`dmm-delivery-app/infrastructure/terraform`), write each SHA-1 in
    lowercase with no colons:
    - `firebase_apps.tf`: add both to `sha1_hashes` (Google sign-in).
