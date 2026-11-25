@@ -150,16 +150,23 @@ class AuthState extends ChangeNotifier {
       status = AuthStatus.error;
       notifyListeners();
     } on GoogleSignInException catch (e, s) {
-      if (e.code != GoogleSignInExceptionCode.canceled) {
-        AppLog.auth.error('GoogleSignInException during sign-in', e, s, {'code': e.code.name});
-        errorMessage = e.description ?? e.code.name;
-        status = AuthStatus.error;
-        notifyListeners();
-      } else {
-        AppLog.auth('sign-in canceled by user -> signedOut');
-        status = AuthStatus.signedOut;
-        notifyListeners();
-      }
+      // Reported and shown for every code, `canceled` included. Android's
+      // Credential Manager reports more than the Back button as "canceled":
+      // no usable Google account on the phone, an out-of-date Play services
+      // and a sign-in setup problem can all arrive that way. Treating it as
+      // a quiet sign-out is how an owner once watched sign-in "do nothing"
+      // while nothing reached Firebase and nobody could see why.
+      AppLog.auth.error('GoogleSignInException during sign-in', e, s, {'code': e.code.name});
+      errorMessage = SignInFailure.google(e.code.name, e.description);
+      status = AuthStatus.error;
+      notifyListeners();
+    } catch (e, s) {
+      // Anything else (a platform error from a plugin) must not escape and
+      // leave the screen spinning or silently reset.
+      AppLog.auth.error('unexpected error during sign-in', e, s, {'type': e.runtimeType.toString()});
+      errorMessage = SignInFailure.unexpected(e);
+      status = AuthStatus.error;
+      notifyListeners();
     }
   }
 

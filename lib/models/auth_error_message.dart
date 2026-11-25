@@ -69,3 +69,32 @@ class AuthErrorMessage {
     return message;
   }
 }
+
+/// What to show when Google's own sign-in, before Firebase, fails.
+///
+/// Always says something, and always carries the raw code and description
+/// so a screenshot from the person who hit it is enough to diagnose it.
+class SignInFailure {
+  const SignInFailure._();
+
+  /// Longest raw detail shown; the full text goes to Crashlytics.
+  static const maxDetail = 300;
+
+  static String google(String code, String? description) {
+    final headline = code == 'canceled'
+        ? "Google sign-in didn't finish.\n\n"
+              "If you didn't close it yourself: check that the Google account you want is added to "
+              'this phone (Settings > Accounts) and that Google Play services is up to date, then '
+              'try again.'
+        : "Google sign-in didn't work. Try again, and if it keeps happening send this message "
+              'to whoever manages the app.';
+    final detail = (description == null || description.trim().isEmpty) ? code : '$code: ${description.trim()}';
+    return '$headline\n\nDetails: ${_clip(detail)}';
+  }
+
+  static String unexpected(Object error) =>
+      "Sign-in didn't work. Try again, and if it keeps happening send this message to whoever "
+      'manages the app.\n\nDetails: ${_clip(error.toString())}';
+
+  static String _clip(String s) => s.length <= maxDetail ? s : '${s.substring(0, maxDetail)}…';
+}

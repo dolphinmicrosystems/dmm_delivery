@@ -138,8 +138,8 @@ a sign-in error. The Simple map style still works.
    ```
    "GOOGLE_MAP_TILES_ANDROID_CERT": "AB12...EF"
    ```
-   Then debug builds also send that certificate. Remove the line again when developing with
-   the Detailed or Satellite maps.
+   Debug builds then send it too, which is fine: the Maps key allows both the debug and the
+   Play certificate.
 
 ### A8. Deploy the backend
 

@@ -17,10 +17,11 @@ import '../observability/crash_reporting.dart';
 /// with. debugPrint also rate-limits, so a burst of lines can't drop the
 /// tail the way raw `print` would.
 ///
-/// Calls compile away in release builds (`kDebugMode` guard), so these are
+/// Nothing is printed in release builds (`kDebugMode` guard), so these are
 /// safe to leave in place rather than adding and stripping them each time
-/// something needs tracing - except `.error(...)`, which in release goes to
-/// Crashlytics (lib/observability/crash_reporting.dart).
+/// something needs tracing. In release, `.error(...)` goes to Crashlytics as
+/// a report and every other line as a breadcrumb attached to the next report
+/// (lib/observability/crash_reporting.dart).
 class AppLog {
   AppLog._();
 
@@ -38,8 +39,15 @@ class _Area {
 
   /// A normal step in a flow. [fields] keeps values greppable and readable
   /// (`key=value`) rather than baked into free-form prose.
+  ///
+  /// In release builds the message alone (never [fields], which can hold an
+  /// email) is kept as a Crashlytics breadcrumb: the steps that led up to an
+  /// error arrive with its report.
   void call(String message, [Map<String, Object?> fields = const {}]) {
-    if (!kDebugMode) return;
+    if (!kDebugMode) {
+      CrashReporting.breadcrumb('[$name] $message');
+      return;
+    }
     debugPrint('[BlueDot/$name] $message${_format(fields)}');
   }
 

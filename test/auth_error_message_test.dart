@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dmm_delivery/models/auth_error_message.dart';
 
 void main() {
+  signInFailureTests();
+
   group('AuthErrorMessage.humanize', () {
     test('digs the sentence out of the envelope Identity Platform wraps it in', () {
       // Verbatim from a real rejection: handle_sign_in.py writes a sentence
@@ -69,6 +71,29 @@ void main() {
       const raw = '{"error":{"status":"PERMISSION_DENIED"}}';
 
       expect(AuthErrorMessage.humanize(raw), raw);
+    });
+  });
+}
+
+void signInFailureTests() {
+  group('SignInFailure', () {
+    test('a "canceled" sign-in still explains itself and carries the raw detail', () {
+      final m = SignInFailure.google('canceled', '[16] Account reauth failed.');
+      expect(m, contains("didn't finish"));
+      expect(m, contains('Settings > Accounts'));
+      expect(m, endsWith('Details: canceled: [16] Account reauth failed.'));
+    });
+
+    test('other codes say it failed and keep the code when there is no description', () {
+      final m = SignInFailure.google('providerConfigurationError', null);
+      expect(m, contains("didn't work"));
+      expect(m, endsWith('Details: providerConfigurationError'));
+    });
+
+    test('long details are clipped', () {
+      final m = SignInFailure.unexpected(Exception('x' * 1000));
+      expect(m.length, lessThan(SignInFailure.maxDetail + 200));
+      expect(m, endsWith('…'));
     });
   });
 }

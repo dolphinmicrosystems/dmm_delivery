@@ -14,6 +14,8 @@ import 'package:flutter/foundation.dart';
 ///  * every error the app catches and logs with `AppLog.<area>.error(...)`,
 ///    as a non-fatal report, with the log message as its reason and the
 ///    log's fields attached;
+///  * every other `AppLog` line's message (not its fields) as a breadcrumb
+///    ([breadcrumb]) on the report that follows;
 ///  * who it happened to: the account id and role ([identify]) - never an
 ///    email or a name. Keep personal details out of AppLog error fields for
 ///    the same reason.
@@ -42,6 +44,14 @@ class CrashReporting {
     if (!_enabled) return;
     await FirebaseCrashlytics.instance.setUserIdentifier(uid ?? '');
     await FirebaseCrashlytics.instance.setCustomKey('role', role ?? 'signed_out');
+  }
+
+  /// One step of what the app was doing. Crashlytics keeps the latest ones
+  /// on the phone and attaches them to the next report, so an error arrives
+  /// with the steps that led to it. Text only - no personal details.
+  static void breadcrumb(String message) {
+    if (!_enabled) return;
+    FirebaseCrashlytics.instance.log(message).catchError((Object _) {});
   }
 
   /// A caught error, as a non-fatal report. Never throws.

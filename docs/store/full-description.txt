@@ -1,0 +1,79 @@
+Dunedin Milk & More is the delivery app behind our daily milk and grocery runs. It connects the office and the drivers on the road, from the morning run sheet to the last doorstep, so every order reaches the right customer, on time, with proof.
+
+The app is for Dunedin Milk & More staff and invited drivers. Access is by invitation only.
+
+FOR DRIVERS
+
+Turn-by-turn navigation, built in
+• Spoken directions and a heading-up map that follows the van
+• The next stop, distance and arrival time always on screen
+• Automatic re-routing if you take a different road
+• Simple, detailed and satellite map styles
+
+Every stop, clearly laid out
+• Customer name, address, products and delivery notes for each stop
+• "Arrived" appears only when you are actually at the address
+• Voice prompts read out what to deliver as you pull up
+• Deliver in any order: pick the next stop yourself, and the app keeps up
+
+Proof of delivery
+• Take a photo at the door; it is stamped with the date, time and stop
+• Photos are compressed to save data and uploaded automatically
+• Drove off without tapping? The app asks whether the stop was delivered
+
+Load the truck with confidence
+• A load sheet totals every product on the run
+• Tick items off as they go on the truck and report anything short
+• See changes from the office the moment they are made
+
+Your schedule at a glance
+• Today's run, upcoming runs and your full history
+• Start times, finish windows and your assigned vehicle
+• Reminders before a run starts
+• Open the original run sheet PDF at any time
+
+FOR THE OWNER AND OFFICE
+
+Run sheets to routes in minutes
+• Upload a run sheet PDF; every stop is read, located and placed on the map
+• Routes are optimised on real roads, and your own stop order is kept on re-upload
+• Drag stops to reorder, remove stops, and rename routes
+• Delivery instructions you set carry over to every future run
+
+Live view of every run
+• See each van's position and progress on a live map
+• Know which stops are done, what is next and when the run will finish
+• On time, running late, or no signal: one clear status for every run
+• Optional live notifications for the drivers you choose
+
+Scheduling and drivers
+• Assign routes to drivers for every day, weekdays, weekends or a single date
+• A seven-day roster shows who is driving what, and which routes need a driver
+• Invite drivers by email and remove access at any time
+• Assign vehicles to drivers
+
+Records you can rely on
+• Delivery photos for every run, in route order
+• Start, finish and delivery times for each stop
+• Driver records and recent run history
+• Home dashboard: runs done, stops delivered, drivers online and anything that needs attention
+
+Your business, your brand
+• Add your business name and logo
+• Set your country and time zone
+• Require a photo at every stop if you want proof everywhere
+
+NOTIFICATIONS THAT MATTER
+• Drivers are told when a route is assigned or a run changes
+• The office is told when runs start, finish, run late or stop reporting
+• Load sheet changes and shortages reach the other side instantly
+
+PRIVACY AND SECURITY
+• Location is used only while a driver has a delivery run open, never in the background
+• Data is encrypted in transit and stored on Google Cloud
+• Drivers see only the runs assigned to them
+• No ads, and no data is sold or shared for advertising
+
+Sign in with your Google account. If you are a new driver, ask Dunedin Milk & More for an invitation, then sign in with the email address you were invited on.
+
+Questions or support: office@milkandmore.co.nz
