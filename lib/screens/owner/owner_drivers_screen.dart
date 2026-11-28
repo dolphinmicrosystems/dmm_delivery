@@ -132,6 +132,8 @@ class _InviteDriverDialogState extends State<_InviteDriverDialog> {
         final ttlDays = snapshot.data ?? InvitationTtl.fallback;
 
         return AlertDialog(
+          // Scrolls so the keyboard can never squeeze it into an overflow.
+          scrollable: true,
           title: const Text('Register driver'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -691,6 +693,8 @@ class _DriverNameDialogState extends State<_DriverNameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // Scrolls so the keyboard can never squeeze it into an overflow.
+      scrollable: true,
       title: const Text('Rename driver'),
       content: Column(
         mainAxisSize: MainAxisSize.min,

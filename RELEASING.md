@@ -200,6 +200,11 @@ the old version back):
 Options: `--no-upload` (build only), `--no-git` (no commit or tag),
 `--track internal|closed|open|production`.
 
+**Testers and users don't need to do anything to update.** The app checks Google Play when it opens. If
+there's a newer version on their track, Play asks "Update available?", downloads it in the background,
+and the app then shows "A new version is ready" with **Restart** (`lib/services/app_updater.dart`).
+Play can take a few hours after a release is approved before it offers it.
+
 **Moving a tested version up** (internal → closed → production): in Play Console,
 open the track with the release → **Promote release**. This needs no new build.
 

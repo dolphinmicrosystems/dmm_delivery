@@ -583,6 +583,12 @@ markers itself via `flutter_map`; every map draws `BasemapLayer` (see Basemaps b
     menu then offers "Send a test crash".
   - **Firebase project.** The backend's `firebase_apps.tf` owns the app's Firebase registration and
     outputs its `google-services.json`.
+- **App updates** (`lib/services/app_updater.dart`, the `in_app_update` plugin): Play's *flexible* in-app update.
+  `AppUpdater` wraps every screen (`MaterialApp.builder`) and checks Play on start and on return to the front
+  (at most hourly). A newer version gets Play's own "Update available" dialog and downloads in the background;
+  then a bar says "A new version is ready" with **Restart**. Nothing restarts by itself (a driver mid-run
+  decides). The decision is `AppUpdateStep.decide` (tested). Only Play installs can update this way; debug
+  and sideloaded builds skip it, logged under `AppLog.update`.
 - **Push notifications** (`lib/notifications/`):
   - **Registration.** `AuthGate` registers the phone on sign-in (permission prompt on Android 13+, token
     saved to `user_devices/{uid}/tokens/{token}`). `AuthState.signOut` unregisters it *before* signing

@@ -9,6 +9,7 @@ import 'notifications/notification_router.dart';
 import 'notifications/push_notifications.dart';
 import 'observability/crash_reporting.dart';
 import 'screens/auth/auth_gate.dart';
+import 'services/app_updater.dart';
 import 'state/auth_state.dart';
 import 'theme/app_theme.dart';
 import 'util/app_log.dart';
@@ -37,6 +38,10 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  /// The app-wide ScaffoldMessenger, so AppUpdater's "new version" bar shows
+  /// over whichever screen is open.
+  static final messengerKey = GlobalKey<ScaffoldMessengerState>();
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -44,6 +49,10 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       // So a tapped notification can open its run (NotificationRouter).
       navigatorKey: NotificationRouter.navigatorKey,
+      scaffoldMessengerKey: messengerKey,
+      // Above every screen: offers a new version from Google Play wherever
+      // the person is.
+      builder: (context, child) => AppUpdater(messengerKey: messengerKey, child: child!),
       theme: AppTheme.light,
       home: AuthGate(authState: AuthState()),
     );

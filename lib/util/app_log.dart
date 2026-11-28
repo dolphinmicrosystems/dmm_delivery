@@ -30,6 +30,9 @@ class AppLog {
 
   /// Owner screens: navigation, Firestore streams, run-sheet uploads.
   static const owner = _Area('owner');
+
+  /// App updates from Google Play: checks, downloads, installs.
+  static const update = _Area('update');
 }
 
 class _Area {

@@ -455,6 +455,8 @@ class _RenameDialogState extends State<_RenameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // Scrolls so the keyboard can never squeeze it into an overflow.
+      scrollable: true,
       title: const Text('Rename route'),
       content: TextField(
         controller: _controller,

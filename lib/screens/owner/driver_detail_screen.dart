@@ -744,6 +744,8 @@ class _AddVehicleDialogState extends State<_AddVehicleDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // Scrolls so the keyboard can never squeeze it into an overflow.
+      scrollable: true,
       title: const Text('Add a vehicle'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
